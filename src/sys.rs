@@ -23,8 +23,7 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT;
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, RemovePropW, SetLayeredWindowAttributes, SetPropW,
-    SetWindowLongPtrW, GWL_EXSTYLE, LWA_ALPHA, WS_EX_LAYERED,
+    RemovePropW, SetLayeredWindowAttributes, SetPropW, LWA_ALPHA,
 };
 
 /// Window composition attribute enumeration (`user32.dll!SetWindowCompositionAttribute`).
@@ -198,10 +197,9 @@ pub fn set_overlay_capture_exclusion(hwnd: HWND) -> windows::core::Result<()> {
     Ok(())
 }
 
-/// Prepares `hwnd` for Architecture A (Parasitic Compositor):
-/// 1. Strips DWM non-client rendering and native corner rounding.
-/// 2. Applies `WS_EX_LAYERED` with `alpha = 1` so `win32kbase.sys` treats it as 100% solid
-///    for mouse hit-testing, clicking, scrolling, and IME, while remaining visually transparent.
+/// Prepares `hwnd` for ChickenWM window management:
+/// 1. Strips DWM non-client rendering and native corner rounding so ChickenWM's border renders cleanly.
+/// 2. Ensures the window remains fully visible and responsive to hit-testing.
 /// 3. Marks the window with `ChickenWMManagedVisual` property for panic recovery.
 pub fn attach_in_place_hit_test(hwnd: HWND) -> windows::core::Result<()> {
     unsafe {
@@ -220,15 +218,6 @@ pub fn attach_in_place_hit_test(hwnd: HWND) -> windows::core::Result<()> {
             &corner as *const _ as *const _,
             std::mem::size_of_val(&corner) as u32,
         );
-
-        // Ensure WS_EX_LAYERED is active
-        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        if (ex_style & WS_EX_LAYERED.0 as isize) == 0 {
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED.0 as isize);
-        }
-
-        // Set LWA_ALPHA = 1 (solid hit-testing, invisible to human eye)
-        SetLayeredWindowAttributes(hwnd, COLORREF(0), 1, LWA_ALPHA)?;
 
         // Tag window for crash recovery
         let prop_w = to_wide_null(CHICKENWM_VISUAL_PROP);
