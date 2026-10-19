@@ -21,9 +21,12 @@ use windows::Win32::System::Registry::{
     RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, KEY_WRITE,
     REG_OPTION_NON_VOLATILE, REG_SZ,
 };
+use windows::Win32::System::Diagnostics::Debug::{
+    SetUnhandledExceptionFilter, EXCEPTION_POINTERS,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
-    MOD_SHIFT, VK_CONTROL, VK_ESCAPE, VK_MENU, VK_SHIFT,
+    MOD_SHIFT, MOD_WIN, VK_CONTROL, VK_ESCAPE, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
 use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE, WM_HOTKEY};
@@ -226,7 +229,8 @@ pub fn restore_all_desktop_windows() -> usize {
 
     struct Context {
         restored: usize,
-        prop: Vec<u16>,
+        hidden_prop: Vec<u16>,
+        visual_prop: Vec<u16>,
     }
 
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -235,11 +239,15 @@ pub fn restore_all_desktop_windows() -> usize {
             if !IsWindow(hwnd).as_bool() {
                 return BOOL(1);
             }
-            let prop = PCWSTR(ctx.prop.as_ptr());
-            if GetPropW(hwnd, prop).0.is_null() {
+            let hidden_prop = PCWSTR(ctx.hidden_prop.as_ptr());
+            let visual_prop = PCWSTR(ctx.visual_prop.as_ptr());
+            let is_hidden = !GetPropW(hwnd, hidden_prop).0.is_null();
+            let is_visual = !GetPropW(hwnd, visual_prop).0.is_null();
+            if !is_hidden && !is_visual {
                 return BOOL(1);
             }
-            let _ = RemovePropW(hwnd, prop);
+            if is_hidden {
+                let _ = RemovePropW(hwnd, hidden_prop);
             if let Some((x, y)) = take_parked_position(hwnd) {
                 use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER};
                 let _ = SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -249,6 +257,11 @@ pub fn restore_all_desktop_windows() -> usize {
             } else {
                 let _ = ShowWindow(hwnd, SW_SHOWNA);
             }
+            }
+            if is_visual {
+                crate::sys::restore_managed_window(hwnd);
+            }
+            let _ = crate::sys::set_window_cloak(hwnd, false);
             ctx.restored += 1;
         }
         BOOL(1)
@@ -256,7 +269,8 @@ pub fn restore_all_desktop_windows() -> usize {
 
     let mut ctx = Context {
         restored: 0,
-        prop: to_wide_null(HIDDEN_BY_CHICKENWM_PROP),
+        hidden_prop: to_wide_null(HIDDEN_BY_CHICKENWM_PROP),
+        visual_prop: to_wide_null(crate::sys::CHICKENWM_VISUAL_PROP),
     };
     unsafe {
         // 0x0100 = DESKTOP_ENUMERATE, required to walk the input desktop's top-level windows.
@@ -681,14 +695,23 @@ pub fn spawn_emergency_failsafe_thread() -> thread::JoinHandle<()> {
     thread::Builder::new()
         .name("chickenwm-emergency-failsafe".to_string())
         .spawn(move || unsafe {
-            const HOTKEY_ID: i32 = 0x7F99;
-            let registered = RegisterHotKey(
+            const HOTKEY_ALT_ID: i32 = 0x7F99;
+            const HOTKEY_WIN_ID: i32 = 0x7F98;
+            let reg_alt = RegisterHotKey(
                 None,
-                HOTKEY_ID,
+                HOTKEY_ALT_ID,
                 MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT,
                 VK_ESCAPE.0 as u32,
             )
             .is_ok();
+            let reg_win = RegisterHotKey(
+                None,
+                HOTKEY_WIN_ID,
+                MOD_CONTROL | MOD_WIN | MOD_SHIFT | MOD_NOREPEAT,
+                VK_ESCAPE.0 as u32,
+            )
+            .is_ok();
+            let registered = reg_alt || reg_win;
 
             if registered {
                 info!("Emergency failsafe hotkey (Ctrl + Alt + Shift + Escape) registered.");
@@ -699,8 +722,9 @@ pub fn spawn_emergency_failsafe_thread() -> thread::JoinHandle<()> {
             let mut msg = MSG::default();
             loop {
                 while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                    if msg.message == WM_HOTKEY && msg.wParam.0 as i32 == HOTKEY_ID {
-                        let _ = UnregisterHotKey(None, HOTKEY_ID);
+                    if msg.message == WM_HOTKEY && (msg.wParam.0 as i32 == HOTKEY_ALT_ID || msg.wParam.0 as i32 == HOTKEY_WIN_ID) {
+                        let _ = UnregisterHotKey(None, HOTKEY_ALT_ID);
+                        let _ = UnregisterHotKey(None, HOTKEY_WIN_ID);
                         trigger_emergency_restore(true);
                         return;
                     }
@@ -709,12 +733,15 @@ pub fn spawn_emergency_failsafe_thread() -> thread::JoinHandle<()> {
                 // Direct hardware key state check (Ctrl + Alt + Shift + Escape simultaneously held)
                 let ctrl = (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
                 let alt = (GetAsyncKeyState(VK_MENU.0 as i32) as u16 & 0x8000) != 0;
+                let win = (GetAsyncKeyState(VK_LWIN.0 as i32) as u16 & 0x8000) != 0
+                    || (GetAsyncKeyState(VK_RWIN.0 as i32) as u16 & 0x8000) != 0;
                 let shift = (GetAsyncKeyState(VK_SHIFT.0 as i32) as u16 & 0x8000) != 0;
                 let esc = (GetAsyncKeyState(VK_ESCAPE.0 as i32) as u16 & 0x8000) != 0;
 
-                if ctrl && alt && shift && esc {
+                if ctrl && (alt || win) && shift && esc {
                     if registered {
-                        let _ = UnregisterHotKey(None, HOTKEY_ID);
+                        let _ = UnregisterHotKey(None, HOTKEY_ALT_ID);
+                        let _ = UnregisterHotKey(None, HOTKEY_WIN_ID);
                     }
                     trigger_emergency_restore(true);
                     return;
@@ -724,4 +751,17 @@ pub fn spawn_emergency_failsafe_thread() -> thread::JoinHandle<()> {
             }
         })
         .expect("Failed to spawn emergency failsafe thread")
+}
+
+/// Sets an unhandled exception filter that restores desktop windows and ejects DWM hooks
+/// if ChickenWM crashes unexpectedly.
+pub fn install_crash_handler() {
+    unsafe extern "system" fn crash_filter(_: *const EXCEPTION_POINTERS) -> i32 {
+        restore_all_desktop_windows();
+        eject_dwm_hooks();
+        0 // EXCEPTION_CONTINUE_SEARCH
+    }
+    unsafe {
+        let _ = SetUnhandledExceptionFilter(Some(crash_filter));
+    }
 }

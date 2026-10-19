@@ -8,6 +8,7 @@
 //! - High-resolution `CreateWaitableTimerExW` + `DwmFlush` Adaptive Frame Scheduler (`frame_scheduler`)
 //! - Safe RAII Win32 handle wrappers (`handles`)
 
+pub mod animation;
 pub mod config;
 pub mod config_check;
 pub mod css;
@@ -23,6 +24,7 @@ pub mod instance;
 pub mod ipc;
 pub mod monitor;
 pub mod scoring;
+pub mod sys;
 pub mod theme;
 pub mod theme_presets;
 pub mod theme_tools;
