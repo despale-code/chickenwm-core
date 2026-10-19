@@ -206,6 +206,26 @@ impl AdaptiveFrameScheduler {
         self.sample_delta_seconds()
     }
 
+    /// Paces to the next frame boundary using the high-resolution waitable timer without
+    /// blocking on DWM VBlank (`DwmFlush`). Ideal for input polling and mouse drag streams.
+    pub fn wait_for_next_frame_timer(&mut self, has_active_work: bool) -> f32 {
+        if !has_active_work && self.control.vfr_enabled() {
+            self.control.wait_until_woken();
+            unsafe {
+                let _ = QueryPerformanceCounter(&mut self.last_qpc);
+            }
+            return self.control.target_frame_duration_secs() as f32;
+        }
+
+        let target_secs = self.control.target_frame_duration_secs();
+        let elapsed = self.peek_elapsed_seconds();
+        if elapsed < target_secs {
+            self.sleep_high_precision(target_secs - elapsed);
+        }
+
+        self.sample_delta_seconds()
+    }
+
     fn peek_elapsed_seconds(&self) -> f64 {
         let mut now = 0i64;
         unsafe {

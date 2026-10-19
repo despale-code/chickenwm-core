@@ -474,9 +474,13 @@ where
             let mut buf_reader = BufReader::new(reader);
             let mut line = String::new();
 
-            if let Ok(bytes_read) = buf_reader.read_line(&mut line).await {
-                if bytes_read > 0 {
-                    let response = match serde_json::from_str::<IpcCommand>(line.trim()) {
+            while let Ok(bytes_read) = buf_reader.read_line(&mut line).await {
+                if bytes_read == 0 {
+                    break;
+                }
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    let response = match serde_json::from_str::<IpcCommand>(trimmed) {
                         Ok(cmd) => handler_clone(cmd).await,
                         Err(e) => IpcResponse::Error {
                             message: format!("Invalid IPC JSON request: {e}"),
@@ -488,6 +492,7 @@ where
                         let _ = writer.flush().await;
                     }
                 }
+                line.clear();
             }
         });
     }
@@ -565,6 +570,71 @@ pub fn send_ipc_command_blocking(pipe_name: &str, cmd: &IpcCommand) -> Result<Ip
     reader.read_line(&mut line)?;
     let resp: IpcResponse = serde_json::from_str(line.trim())?;
     Ok(resp)
+}
+
+/// Persistent client connection to a named pipe (e.g. `PIPE_NAME_WM`).
+/// Avoids opening and closing named pipes on every message, dramatically reducing kernel I/O overhead.
+pub struct PersistentIpcClient {
+    pipe_name: String,
+    stream: Option<std::fs::File>,
+}
+
+impl PersistentIpcClient {
+    pub fn new(pipe_name: &str) -> Self {
+        Self {
+            pipe_name: pipe_name.to_string(),
+            stream: None,
+        }
+    }
+
+    pub fn send(&mut self, cmd: &IpcCommand) -> Result<IpcResponse> {
+        let mut retries = 0;
+        loop {
+            if self.stream.is_none() {
+                match std::fs::OpenOptions::new().read(true).write(true).open(&self.pipe_name) {
+                    Ok(f) => self.stream = Some(f),
+                    Err(e) => {
+                        retries += 1;
+                        if retries > 2 {
+                            return Err(e).context("Failed to open named pipe");
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        continue;
+                    }
+                }
+            }
+
+            if let Some(ref mut file) = self.stream {
+                use std::io::{BufRead, BufReader as StdBufReader, Write};
+                let mut payload = match serde_json::to_vec(cmd) {
+                    Ok(p) => p,
+                    Err(e) => return Err(e.into()),
+                };
+                payload.push(b'\n');
+                if file.write_all(&payload).is_ok() && file.flush().is_ok() {
+                    if let Ok(cloned) = file.try_clone() {
+                        let mut reader = StdBufReader::new(cloned);
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).is_ok() {
+                            let trimmed = line.trim();
+                            if !trimmed.is_empty() {
+                                if let Ok(resp) = serde_json::from_str::<IpcResponse>(trimmed) {
+                                    return Ok(resp);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Connection failed or pipe broken; reset stream and retry once
+            self.stream = None;
+            retries += 1;
+            if retries > 2 {
+                anyhow::bail!("Failed to send command over persistent named pipe {}", self.pipe_name);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
