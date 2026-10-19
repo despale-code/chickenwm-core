@@ -869,8 +869,6 @@ pub struct MiscConfig {
     /// windows of elevated programs can be tiled.
     #[serde(default)]
     pub run_as_admin: bool,
-    /// Phase 1.1 & 9.3: Anti-Cheat Safe Switch (`false` = Standard Win32/DirectComposition mode; `true` = Experimental `chickenwm-dwm-hook` PDB injection).
-    pub dwm_hook_enabled: bool,
     /// Window classes resized with a GPU-stretched preview during mouse drags (one real resize
     /// on release) instead of live resizing — for apps whose renderer can't keep up (Firefox/Zen).
     #[serde(default = "default_resize_preview_classes")]
@@ -890,7 +888,6 @@ impl Default for MiscConfig {
             replace_winlogon_shell: false,
             register_files_handler: false,
             run_as_admin: false,
-            dwm_hook_enabled: false,
             resize_preview_classes: default_resize_preview_classes(),
         }
     }
@@ -1597,11 +1594,6 @@ impl HyprConfig {
                         self.misc.run_as_admin = b;
                     }
                 }
-                "dwm_hook_enabled" | "compositor_hook" => {
-                    if let Some(b) = parse_bool(v) {
-                        self.misc.dwm_hook_enabled = b;
-                    }
-                }
                 "resize_preview_classes" => {
                     self.misc.resize_preview_classes = v
                         .split(',')
@@ -1902,8 +1894,6 @@ misc {
     register_files_handler = false
     # Start elevated (administrator) so admin windows can be tiled; toggle it in Settings
     run_as_admin = false
-    # Anti-Cheat Safe Switch: false = Standard Win32/DirectComposition mode, true = Experimental uDWM PDB Hook
-    dwm_hook_enabled = false
     # Window classes resized with a stretched GPU preview while dragging (real resize on release).
     # None by default: every window resizes for real. Example: MozillaWindowClass
     resize_preview_classes =

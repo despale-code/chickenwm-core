@@ -222,7 +222,6 @@ pub struct BarStateSnapshot {
     pub active_layout: String,
     pub monitor_name: String,
     pub monitor_refresh_hz: u32,
-    pub dwm_hook_active: bool,
 }
 
 impl Default for BarStateSnapshot {
@@ -244,7 +243,6 @@ impl Default for BarStateSnapshot {
             active_layout: "dwindle".to_string(),
             monitor_name: r"\\.\DISPLAY1".to_string(),
             monitor_refresh_hz: 60,
-            dwm_hook_active: false,
         }
     }
 }
@@ -286,11 +284,6 @@ pub enum IpcCommand {
         monitor: Option<String>,
         path: String,
         transition: Option<String>,
-    },
-    /// Phase 1.1 & 9.3: Anti-Cheat Safe Switch — toggle between Standard Win32/DirectComposition mode
-    /// (`false`) and Experimental DWM DLL Injection (`chickenwm-dwm-hook`) mode (`true`).
-    SetCompositorMode {
-        dwm_hook_enabled: bool,
     },
     /// Show a notification (`chickenwm-notify`, `\\.\pipe\chickenwm-notify-ipc`).
     Notify(Notification),
@@ -363,7 +356,6 @@ pub struct DaemonStatus {
     pub active_layout: String,
     pub explorer_suppressed: bool,
     pub winlogon_shell_replaced: bool,
-    pub dwm_hook_enabled: bool,
     pub modules_running: Vec<String>,
     pub monitor_count: usize,
     pub client_count: usize,

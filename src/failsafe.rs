@@ -36,8 +36,8 @@ use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE, WM_H
 /// and immediately flips to `false` when the emergency failsafe triggers.
 pub static EXPLORER_KILLER_ENABLED: AtomicBool = AtomicBool::new(false);
 
-/// Global atomic flag tracking whether experimental DWM DLL injection is currently active.
-pub static DWM_HOOK_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+
 
 /// Global atomic flag signaled when the emergency failsafe has been triggered.
 pub static FAILSAFE_TRIGGERED: AtomicBool = AtomicBool::new(false);
@@ -49,25 +49,9 @@ fn to_wide_null(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// Signals and ejects any experimental DWM hooks (`chickenwm_dwm_hook.dll`) from `dwm.exe`.
-pub fn eject_dwm_hooks() {
-    DWM_HOOK_ACTIVE.store(false, Ordering::SeqCst);
-    let signal_path = std::env::temp_dir().join("chickenwm_dwm_unhook.signal");
-    let _ = std::fs::write(&signal_path, b"EJECT");
-    if let Ok(mut exe) = std::env::current_exe() {
-        exe.set_file_name("chickenwm-dwm-hook.exe");
-        if exe.exists() {
-            let _ = Command::new(exe)
-                .arg("--eject")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-        }
-    }
-}
 
 /// Immediately restores `explorer.exe` as the Windows shell, disables the process killer,
-/// ejects any DWM hooks, launches `C:\Windows\explorer.exe`, and optionally terminates all `chickenwm` processes.
+/// launches `C:\Windows\explorer.exe`, and optionally terminates all `chickenwm` processes.
 #[track_caller]
 pub fn trigger_emergency_restore(terminate_self: bool) {
     let caller = std::panic::Location::caller();
@@ -83,10 +67,9 @@ pub fn trigger_emergency_restore(terminate_self: bool) {
         std::process::exit(0);
     }
 
-    // 1. Immediately disable the explorer.exe suppressor & eject any DWM hooks
+    // 1. Immediately disable the explorer.exe suppressor
     EXPLORER_KILLER_ENABLED.store(false, Ordering::SeqCst);
-    eject_dwm_hooks();
-    warn!("EMERGENCY FAILSAFE TRIGGERED (from {caller}): Restoring explorer.exe shell, ejecting DWM hooks, and disabling process suppressor!");
+    warn!("EMERGENCY FAILSAFE TRIGGERED (from {caller}): Restoring explorer.exe shell, and disabling process suppressor!");
 
     // 2. Restore HKCU\Software\Microsoft\Windows NT\CurrentVersion\Winlogon\Shell -> explorer.exe
     if let Err(e) = restore_winlogon_shell_registry() {
@@ -295,7 +278,7 @@ pub fn restore_all_desktop_windows() -> usize {
 }
 
 /// Every ChickenWM executable; the daemon goes first so its watchdog stops respawning the rest.
-const CHICKENWM_PROCESSES: [&str; 11] = [
+const CHICKENWM_PROCESSES: [&str; 10] = [
     "chickenwm-rooster.exe",
     "chickenwm-wm.exe",
     "chickenwm-binds.exe",
@@ -306,7 +289,6 @@ const CHICKENWM_PROCESSES: [&str; 11] = [
     "chickenwm-settings.exe",
     "chickenwm-notify.exe",
     "chickenwm-shot.exe",
-    "chickenwm-dwm-hook.exe",
 ];
 
 /// Session-wide mutex held by whichever process performs the emergency restore.
@@ -753,12 +735,11 @@ pub fn spawn_emergency_failsafe_thread() -> thread::JoinHandle<()> {
         .expect("Failed to spawn emergency failsafe thread")
 }
 
-/// Sets an unhandled exception filter that restores desktop windows and ejects DWM hooks
+/// Sets an unhandled exception filter that restores desktop windows
 /// if ChickenWM crashes unexpectedly.
 pub fn install_crash_handler() {
     unsafe extern "system" fn crash_filter(_: *const EXCEPTION_POINTERS) -> i32 {
         restore_all_desktop_windows();
-        eject_dwm_hooks();
         0 // EXCEPTION_CONTINUE_SEARCH
     }
     unsafe {

@@ -463,7 +463,6 @@ pub const DEFAULT_ROOBAR_CSS: &str = r#"/* ChickenWM Status Bar (roobar) Theme (
     --islands: true;                     /* false: one background and border for the whole bar */
     --tray-visible: 4;                   /* tray icons shown before the overflow chevron */
     --clock-format: %a %Y-%m-%d  %H:%M;  /* %a %A %b %B %d %e %m %y %Y %H %I %M %S %p */
-    --refresh-rate-dwm: true;            /* refresh-rate widget: show "· udwm" when hooked */
     --network-label: false;              /* Wi-Fi name / "ethernet" next to the icon */
     --bluetooth-label: false;            /* connected device next to the icon */
     --volume-step: 5;                    /* percent per scroll notch */
