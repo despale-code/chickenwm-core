@@ -9,7 +9,7 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use std::os::windows::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
@@ -101,7 +101,33 @@ pub fn admin_task_exists() -> bool {
     schtasks(&["/query", "/tn", ADMIN_TASK_NAME]).map(|o| o.status.success()).unwrap_or(false)
 }
 
-/// Starts the scheduled task (an elevated ChickenWM, no prompt). True when Windows accepted it.
+/// The program the elevated-start task runs, when the task is registered.
+pub fn admin_task_command() -> Option<PathBuf> {
+    let out = schtasks(&["/query", "/tn", ADMIN_TASK_NAME, "/xml"]).ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let xml = String::from_utf8_lossy(&out.stdout);
+    let start = xml.find("<Command>")? + "<Command>".len();
+    let end = start + xml[start..].find("</Command>")?;
+    let cmd = xml[start..end].replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
+    Some(PathBuf::from(cmd.trim().trim_matches('"')))
+}
+
+/// Whether the task is registered *and* starts `exe`. A task left over from another install
+/// location still "starts" through `schtasks /run`, but runs nothing.
+pub fn admin_task_runs(exe: &Path) -> bool {
+    let Some(cmd) = admin_task_command() else {
+        return false;
+    };
+    match (std::fs::canonicalize(&cmd), std::fs::canonicalize(exe)) {
+        (Ok(a), Ok(b)) => a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy()),
+        _ => false,
+    }
+}
+
+/// Starts the scheduled task (an elevated ChickenWM, no prompt). True when Windows accepted the
+/// request — not proof the program started; see [`admin_task_runs`].
 pub fn start_admin_task() -> bool {
     schtasks(&["/run", "/tn", ADMIN_TASK_NAME]).map(|o| o.status.success()).unwrap_or(false)
 }

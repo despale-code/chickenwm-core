@@ -12,7 +12,9 @@ use windows::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
 use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
-use windows::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject, INFINITE};
+use windows::Win32::System::Threading::{
+    CreateEventW, CreateMutexW, ReleaseMutex, SetEvent, WaitForSingleObject, INFINITE,
+};
 
 /// Ownership of the daemon mutex; released when dropped or when the process exits.
 pub struct InstanceGuard(HANDLE);
@@ -58,6 +60,62 @@ impl Instance {
 /// (0 for a normal start, a few seconds when taking over from one that is exiting).
 pub fn claim_daemon_instance(wait_ms: u32) -> Instance {
     claim_instance("Local\\ChickenWMRoosterDaemon", wait_ms)
+}
+
+const DAEMON_READY_EVENT: &str = "Local\\ChickenWMRoosterReady";
+
+/// Opens (or creates, unsignaled) the manual-reset event the running daemon sets once it has
+/// claimed the instance and is starting the modules.
+fn daemon_ready_event() -> Option<HANDLE> {
+    unsafe {
+        // Same ACL as the mutex, so an unelevated rooster can wait on an elevated daemon's event.
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        let have_sd = ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            w!("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;IU)"),
+            SDDL_REVISION_1,
+            &mut sd,
+            None,
+        )
+        .is_ok();
+        let attrs = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: sd.0,
+            bInheritHandle: false.into(),
+        };
+        let handle = CreateEventW(
+            have_sd.then_some(&attrs as *const SECURITY_ATTRIBUTES),
+            true,
+            false,
+            &windows::core::HSTRING::from(DAEMON_READY_EVENT),
+        );
+        if have_sd {
+            let _ = LocalFree(HLOCAL(sd.0));
+        }
+        handle.ok()
+    }
+}
+
+/// Called by the process that ends up as the daemon. The handle stays open for the process's
+/// lifetime so the event exists (signaled) while the daemon runs.
+pub fn announce_daemon_ready() {
+    if let Some(h) = daemon_ready_event() {
+        unsafe {
+            let _ = SetEvent(h);
+        }
+    }
+}
+
+/// Waits up to `timeout_ms` for another process to [`announce_daemon_ready`]. Used to confirm
+/// that a handed-over daemon (e.g. the elevated scheduled task) really came up.
+pub fn wait_for_daemon_ready(timeout_ms: u32) -> bool {
+    let Some(h) = daemon_ready_event() else {
+        return false;
+    };
+    unsafe {
+        let ok = WaitForSingleObject(h, timeout_ms) == WAIT_OBJECT_0;
+        let _ = CloseHandle(h);
+        ok
+    }
 }
 
 /// Claims the session-wide mutex `name` (e.g. `Local\ChickenWMShot`) for a single-instance tool.
