@@ -413,3 +413,35 @@ pub fn paint_window(painter: &egui::Painter, rect: Rect, color: Color32) {
     painter.circle_filled(Pos2::new(r.left() + 2.5, r.top() + 1.5), 0.8, color);
 }
 
+pub fn paint_git_branch(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.3_f32, color);
+    let r = rect.width().min(rect.height()) * 0.42;
+
+    let p_bottom = Pos2::new(c.x - r * 0.45, c.y + r * 0.55);
+    let p_top = Pos2::new(c.x - r * 0.45, c.y - r * 0.55);
+    let p_branch = Pos2::new(c.x + r * 0.45, c.y - r * 0.20);
+
+    let node_r = (r * 0.28).clamp(1.5, 2.5);
+
+    // Main vertical trunk
+    painter.line_segment([p_bottom, p_top], stroke);
+
+    // Curved fork from trunk to branch node
+    let fork_start = Pos2::new(p_bottom.x, c.y + r * 0.15);
+    let ctrl1 = Pos2::new(c.x - r * 0.15, c.y + r * 0.10);
+    let ctrl2 = Pos2::new(c.x + r * 0.20, c.y - r * 0.05);
+    let shape = egui::epaint::CubicBezierShape::from_points_stroke(
+        [fork_start, ctrl1, ctrl2, p_branch],
+        false,
+        Color32::TRANSPARENT,
+        stroke,
+    );
+    painter.add(shape);
+
+    // Three branch nodes
+    painter.circle_filled(p_bottom, node_r, color);
+    painter.circle_filled(p_top, node_r, color);
+    painter.circle_filled(p_branch, node_r, color);
+}
+
