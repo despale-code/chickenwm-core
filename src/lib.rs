@@ -31,6 +31,8 @@ pub mod theme_presets;
 pub mod theme_tools;
 pub mod wallpaper;
 pub mod window_rules;
+#[cfg(feature = "egui")]
+pub mod ui_icons;
 
 use anyhow::Result;
 
