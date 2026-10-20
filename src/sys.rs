@@ -434,6 +434,34 @@ pub fn apply_acrylic(hwnd: HWND, tint_abgr: Option<u32>) -> bool {
             std::mem::size_of::<windows::Win32::Foundation::BOOL>() as u32,
         );
 
+        // Strip DWM native fallback titlebar/caption and border
+        let none: u32 = 0xFFFF_FFFE; // DWMWA_COLOR_NONE
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(35), // DWMWA_CAPTION_COLOR
+            &none as *const _ as *const _,
+            std::mem::size_of_val(&none) as u32,
+        );
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(36), // DWMWA_TEXT_COLOR
+            &none as *const _ as *const _,
+            std::mem::size_of_val(&none) as u32,
+        );
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(34), // DWMWA_BORDER_COLOR
+            &none as *const _ as *const _,
+            std::mem::size_of_val(&none) as u32,
+        );
+        let policy = DWMNCRP_DISABLED;
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_NCRENDERING_POLICY,
+            &policy as *const _ as *const _,
+            std::mem::size_of_val(&policy) as u32,
+        );
+
         // 3. Windows 11 DWM backdrop API (DWMWA_SYSTEMBACKDROP_TYPE = 38, DWMSBT_TRANSIENTWINDOW = 3 for Acrylic)
         let backdrop_type: u32 = 3; // DWMSBT_TRANSIENTWINDOW (Desktop Acrylic)
         let hr = DwmSetWindowAttribute(
@@ -479,6 +507,48 @@ unsafe extern "system" fn borderless_resize_subclass(
     _id: usize,
     _ref_data: usize,
 ) -> windows::Win32::Foundation::LRESULT { unsafe {
+    if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCCALCSIZE {
+        if wparam.0 != 0 {
+            let mut wp = windows::Win32::UI::WindowsAndMessaging::WINDOWPLACEMENT {
+                length: std::mem::size_of::<windows::Win32::UI::WindowsAndMessaging::WINDOWPLACEMENT>() as u32,
+                ..Default::default()
+            };
+            if windows::Win32::UI::WindowsAndMessaging::GetWindowPlacement(hwnd, &mut wp).is_ok()
+                && wp.showCmd == windows::Win32::UI::WindowsAndMessaging::SW_SHOWMAXIMIZED.0 as u32
+            {
+                let h_mon = windows::Win32::Graphics::Gdi::MonitorFromWindow(
+                    hwnd,
+                    windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST,
+                );
+                let mut mi = windows::Win32::Graphics::Gdi::MONITORINFO {
+                    cbSize: std::mem::size_of::<windows::Win32::Graphics::Gdi::MONITORINFO>() as u32,
+                    ..Default::default()
+                };
+                if windows::Win32::Graphics::Gdi::GetMonitorInfoW(h_mon, &mut mi).as_bool() {
+                    let params = lparam.0 as *mut windows::Win32::UI::WindowsAndMessaging::NCCALCSIZE_PARAMS;
+                    (*params).rgrc[0] = mi.rcWork;
+                    return windows::Win32::Foundation::LRESULT(0);
+                }
+            }
+            return windows::Win32::Foundation::LRESULT(0);
+        }
+    }
+
+    if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCACTIVATE {
+        // Passing -1 as lParam prevents DefWindowProc from painting the fallback titlebar
+        return windows::Win32::UI::Shell::DefSubclassProc(
+            hwnd,
+            msg,
+            wparam,
+            windows::Win32::Foundation::LPARAM(-1),
+        );
+    }
+
+    if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCPAINT {
+        // Suppress native non-client painting completely
+        return windows::Win32::Foundation::LRESULT(0);
+    }
+
     if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCHITTEST {
         let x = (lparam.0 as i32) as i16 as i32;
         let y = ((lparam.0 as i32) >> 16) as i16 as i32;
@@ -541,16 +611,60 @@ pub fn enable_borderless_resizing(hwnd: HWND) {
             hwnd,
             windows::Win32::UI::WindowsAndMessaging::GWL_STYLE,
         );
+        let new_style = (style & !(windows::Win32::UI::WindowsAndMessaging::WS_CAPTION.0 as i32))
+            | windows::Win32::UI::WindowsAndMessaging::WS_THICKFRAME.0 as i32;
         let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowLongW(
             hwnd,
             windows::Win32::UI::WindowsAndMessaging::GWL_STYLE,
-            style | windows::Win32::UI::WindowsAndMessaging::WS_THICKFRAME.0 as i32,
+            new_style,
         );
+
+        // Strip DWM native caption color, text color, border color, and non-client rendering
+        let none: u32 = 0xFFFF_FFFE; // DWMWA_COLOR_NONE
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(35), // DWMWA_CAPTION_COLOR
+            &none as *const _ as *const _,
+            std::mem::size_of_val(&none) as u32,
+        );
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(36), // DWMWA_TEXT_COLOR
+            &none as *const _ as *const _,
+            std::mem::size_of_val(&none) as u32,
+        );
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(34), // DWMWA_BORDER_COLOR
+            &none as *const _ as *const _,
+            std::mem::size_of_val(&none) as u32,
+        );
+        let policy = DWMNCRP_DISABLED;
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_NCRENDERING_POLICY,
+            &policy as *const _ as *const _,
+            std::mem::size_of_val(&policy) as u32,
+        );
+
         let _ = windows::Win32::UI::Shell::SetWindowSubclass(
             hwnd,
             Some(borderless_resize_subclass),
             9999,
             0,
+        );
+
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+        };
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         );
     }
 }
