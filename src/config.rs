@@ -1559,6 +1559,18 @@ impl HyprConfig {
                         self.theme.auto_dark.longitude = Some(lon);
                     }
                 }
+                "timezone" => {
+                    let tz_val = v.trim().to_string();
+                    if !tz_val.is_empty() {
+                        if self.theme.auto_dark.latitude.is_none() {
+                            if let Some(entry) = crate::timezones::find_timezone_by_id(&tz_val) {
+                                self.theme.auto_dark.latitude = Some(entry.lat);
+                                self.theme.auto_dark.longitude = Some(entry.lon);
+                            }
+                        }
+                        self.theme.auto_dark.timezone = Some(tz_val);
+                    }
+                }
                 _ => {}
             },
             "misc" => match k.as_str() {

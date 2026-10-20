@@ -19,11 +19,19 @@ pub struct AutoDark {
     pub dark_at: String,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
+    pub timezone: Option<String>,
 }
 
 impl Default for AutoDark {
     fn default() -> Self {
-        Self { mode: "off".into(), light_at: "07:00".into(), dark_at: "19:00".into(), latitude: None, longitude: None }
+        Self {
+            mode: "off".into(),
+            light_at: "07:00".into(),
+            dark_at: "19:00".into(),
+            latitude: None,
+            longitude: None,
+            timezone: None,
+        }
     }
 }
 
@@ -141,6 +149,9 @@ pub fn write_auto_dark_keys(doc: &mut crate::config::ConfigDocument, auto: &Auto
     doc.set_category_key("theme", "dark_at", &auto.dark_at);
     if let (Some(lat), Some(lon)) = (auto.latitude, auto.longitude) {
         doc.set_category_key("theme", "location", &format!("{lat:.4}, {lon:.4}"));
+    }
+    if let Some(ref tz) = auto.timezone {
+        doc.set_category_key("theme", "timezone", tz);
     }
 }
 

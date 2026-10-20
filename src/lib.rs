@@ -29,6 +29,7 @@ pub mod sys;
 pub mod theme;
 pub mod theme_presets;
 pub mod theme_tools;
+pub mod timezones;
 pub mod wallpaper;
 pub mod window_rules;
 #[cfg(feature = "egui")]
