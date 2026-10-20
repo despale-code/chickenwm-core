@@ -55,6 +55,40 @@ pub const NERD_FONTS: &[NerdFont] = &[
     NerdFont { asset: "ZedMono", family: "ZedMono Nerd Font" },
 ];
 
+/// Apple typography options that can be downloaded and installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AppleFont {
+    /// Human-friendly display label.
+    pub name: &'static str,
+    /// Family name once installed (matches `--font-family`).
+    pub family: &'static str,
+    /// Direct zip archive download URL.
+    pub url: &'static str,
+}
+
+pub const APPLE_FONTS: &[AppleFont] = &[
+    AppleFont {
+        name: "SF Pro (San Francisco)",
+        family: "SF Pro Display",
+        url: "https://github.com/sahibjotsaggu/San-Francisco-Pro-Fonts/archive/refs/heads/master.zip",
+    },
+    AppleFont {
+        name: "SF Mono",
+        family: "SF Mono",
+        url: "https://github.com/shaunsingh/SFMono-Nerd-Font-Ligaturized/archive/refs/heads/main.zip",
+    },
+    AppleFont {
+        name: "New York (Apple Serif)",
+        family: "New York",
+        url: "https://github.com/anaelchevillard/New-York-NY-Apple-Font/archive/refs/heads/master.zip",
+    },
+    AppleFont {
+        name: "SF Compact",
+        family: "SF Compact Display",
+        url: "https://github.com/oyezcubed/Apple-Fonts-San-Francisco-New-York/archive/refs/heads/master.zip",
+    },
+];
+
 /// The CSS files whose `--font-family` sets each module's font, with a display name.
 pub const FONT_TARGETS: &[(&str, &str)] = &[
     ("roobar.css", "Bar"),
@@ -227,17 +261,17 @@ pub fn set_css_font(css_file: &str, family: &str) -> Result<()> {
     std::fs::write(&path, updated).with_context(|| format!("writing {}", path.display()))
 }
 
-/// Downloads `font` from the Nerd Fonts release and installs every face for the current user:
+/// Downloads and installs a font archive from `url` for the current user:
 /// copied into the per-user font folder, registered under HKCU (so it survives sign-out), loaded
 /// into the session and announced with `WM_FONTCHANGE` (so it's usable right away). Returns the
 /// number of font files installed. Blocking; run it off the UI thread.
-pub fn install_nerd_font(font: &NerdFont) -> Result<usize> {
-    let url = format!("https://github.com/ryanoasis/nerd-fonts/releases/latest/download/{}.zip", font.asset);
-    let zip_path = std::env::temp_dir().join(format!("chickenwm-font-{}.zip", font.asset));
+pub fn install_font_from_url(slug: &str, url: &str) -> Result<usize> {
+    let clean_slug: String = slug.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    let zip_path = std::env::temp_dir().join(format!("chickenwm-font-{clean_slug}.zip"));
     let status = std::process::Command::new("curl.exe")
         .args(["-L", "-f", "-s", "-S", "--retry", "2", "-o"])
         .arg(&zip_path)
-        .arg(&url)
+        .arg(url)
         .creation_flags(CREATE_NO_WINDOW)
         .status()
         .context("couldn't run curl.exe")?;
@@ -248,6 +282,17 @@ pub fn install_nerd_font(font: &NerdFont) -> Result<usize> {
     let installed = install_font_zip(&zip_path);
     let _ = std::fs::remove_file(&zip_path);
     installed
+}
+
+/// Downloads `font` from the Nerd Fonts release and installs every face for the current user.
+pub fn install_nerd_font(font: &NerdFont) -> Result<usize> {
+    let url = format!("https://github.com/ryanoasis/nerd-fonts/releases/latest/download/{}.zip", font.asset);
+    install_font_from_url(font.asset, &url)
+}
+
+/// Downloads and installs an Apple font package for the current user.
+pub fn install_apple_font(font: &AppleFont) -> Result<usize> {
+    install_font_from_url(font.family, font.url)
 }
 
 fn install_font_zip(zip_path: &Path) -> Result<usize> {
