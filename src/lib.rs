@@ -34,6 +34,8 @@ pub mod wallpaper;
 pub mod window_rules;
 #[cfg(feature = "egui")]
 pub mod ui_icons;
+#[cfg(feature = "egui")]
+pub mod window_frame;
 
 use anyhow::Result;
 

@@ -437,6 +437,91 @@ pub fn apply_acrylic(hwnd: HWND, tint_abgr: Option<u32>) -> bool {
     }
 }
 
+
+unsafe extern "system" fn borderless_resize_subclass(
+    hwnd: HWND,
+    msg: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+    _id: usize,
+    _ref_data: usize,
+) -> windows::Win32::Foundation::LRESULT { unsafe {
+    if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCHITTEST {
+        let x = (lparam.0 as i32) as i16 as i32;
+        let y = ((lparam.0 as i32) >> 16) as i16 as i32;
+        let mut rect = RECT::default();
+        if windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect).is_ok() {
+            let style = windows::Win32::UI::WindowsAndMessaging::GetWindowLongW(
+                hwnd,
+                windows::Win32::UI::WindowsAndMessaging::GWL_STYLE,
+            );
+            let is_max = (style as u32 & windows::Win32::UI::WindowsAndMessaging::WS_MAXIMIZE.0) != 0;
+            if !is_max {
+                let border = 7;
+                let corner = 16;
+                let on_left = x >= rect.left - 2 && x < rect.left + border;
+                let on_right = x <= rect.right + 2 && x >= rect.right - border;
+                let on_top = y >= rect.top - 2 && y < rect.top + border;
+                let on_bottom = y <= rect.bottom + 2 && y >= rect.bottom - border;
+
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT,
+                    HTTOPRIGHT,
+                };
+                if on_top && x < rect.left + corner {
+                    return windows::Win32::Foundation::LRESULT(HTTOPLEFT as isize);
+                }
+                if on_top && x >= rect.right - corner {
+                    return windows::Win32::Foundation::LRESULT(HTTOPRIGHT as isize);
+                }
+                if on_bottom && x < rect.left + corner {
+                    return windows::Win32::Foundation::LRESULT(HTBOTTOMLEFT as isize);
+                }
+                if on_bottom && x >= rect.right - corner {
+                    return windows::Win32::Foundation::LRESULT(HTBOTTOMRIGHT as isize);
+                }
+                if on_left {
+                    return windows::Win32::Foundation::LRESULT(HTLEFT as isize);
+                }
+                if on_right {
+                    return windows::Win32::Foundation::LRESULT(HTRIGHT as isize);
+                }
+                if on_top {
+                    return windows::Win32::Foundation::LRESULT(HTTOP as isize);
+                }
+                if on_bottom {
+                    return windows::Win32::Foundation::LRESULT(HTBOTTOM as isize);
+                }
+            }
+        }
+    }
+    windows::Win32::UI::Shell::DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
+pub fn enable_borderless_resizing_raw(hwnd: *mut std::ffi::c_void) {
+    enable_borderless_resizing(HWND(hwnd));
+}
+
+pub fn enable_borderless_resizing(hwnd: HWND) {
+    unsafe {
+        let style = windows::Win32::UI::WindowsAndMessaging::GetWindowLongW(
+            hwnd,
+            windows::Win32::UI::WindowsAndMessaging::GWL_STYLE,
+        );
+        let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowLongW(
+            hwnd,
+            windows::Win32::UI::WindowsAndMessaging::GWL_STYLE,
+            style | windows::Win32::UI::WindowsAndMessaging::WS_THICKFRAME.0 as i32,
+        );
+        let _ = windows::Win32::UI::Shell::SetWindowSubclass(
+            hwnd,
+            Some(borderless_resize_subclass),
+            9999,
+            0,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
