@@ -352,9 +352,9 @@ pub const DEFAULT_FILES_CSS: &str = r#"/* ChickenWM Keyboard-First File Explorer
     --media-color: #cba6f7;
     --accent-color: #33ccff;
     --selected-bg: rgba(51, 204, 255, 0.22);
-    --border-color: #313244;
+    --border-color: rgba(255, 255, 255, 0.08);
     --border-radius: 8px;
-    --font-family: "Cascadia Code", "Consolas", "Segoe UI", monospace;
+    --font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
     --font-size: 14px;
     --row-height: 28px;
 }
@@ -397,7 +397,7 @@ pub const DEFAULT_SETTINGS_CSS: &str = r#"/* ChickenWM Settings Control Center T
     --accent-color: #33ccff;
     --accent-secondary: #00ff99;
     --danger-color: #f38ba8;
-    --border-color: #313244;
+    --border-color: rgba(255, 255, 255, 0.08);
     --border-radius: 10px;
     --font-family: "Segoe UI", sans-serif;
     --font-size: 14px;
