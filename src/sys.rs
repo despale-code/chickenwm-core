@@ -16,10 +16,12 @@ use windows::core::{HRESULT, PCSTR, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HANDLE, HWND, LUID, RECT, SIZE};
 use windows::Win32::Graphics::DirectComposition::IDCompositionVisual2;
 use windows::Win32::Graphics::Dwm::{
-    DwmSetWindowAttribute, DWMWA_NCRENDERING_POLICY, DWMWA_WINDOW_CORNER_PREFERENCE,
+    DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DwmEnableBlurBehindWindow,
+    DWMWA_NCRENDERING_POLICY, DWMWA_WINDOW_CORNER_PREFERENCE,
     DWMNCRP_DISABLED, DWMNCRP_ENABLED, DWMWCP_DEFAULT, DWMWCP_DONOTROUND,
-    DWM_THUMBNAIL_PROPERTIES,
+    DWM_THUMBNAIL_PROPERTIES, DWM_BLURBEHIND, DWM_BB_ENABLE,
 };
+use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT;
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -413,17 +415,38 @@ pub fn apply_acrylic_raw(hwnd: *mut std::ffi::c_void, tint_abgr: Option<u32>) ->
 
 pub fn apply_acrylic(hwnd: HWND, tint_abgr: Option<u32>) -> bool {
     unsafe {
-        // 1. Windows 11 DWM backdrop API (DWMWA_SYSTEMBACKDROP_TYPE = 38, DWMSBT_TRANSIENTWINDOW = 3 for Acrylic)
-        let backdrop_type: u32 = 3; // DWMSBT_TRANSIENTWINDOW (Acrylic)
+        // 1. Extend the DWM frame into the client area across the entire window bounds (-1 margins).
+        // This tells DWM to render the backdrop material behind the entire client area.
+        let margins = MARGINS {
+            cxLeftWidth: -1,
+            cxRightWidth: -1,
+            cyTopHeight: -1,
+            cyBottomHeight: -1,
+        };
+        let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+
+        // 2. Set dark mode attribute on DWM (DWMWA_USE_IMMERSIVE_DARK_MODE = 20)
+        let dark = windows::Win32::Foundation::BOOL(1);
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(20),
+            &dark as *const _ as *const _,
+            std::mem::size_of::<windows::Win32::Foundation::BOOL>() as u32,
+        );
+
+        // 3. Windows 11 DWM backdrop API (DWMWA_SYSTEMBACKDROP_TYPE = 38, DWMSBT_TRANSIENTWINDOW = 3 for Acrylic)
+        let backdrop_type: u32 = 3; // DWMSBT_TRANSIENTWINDOW (Desktop Acrylic)
         let hr = DwmSetWindowAttribute(
             hwnd,
             windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(38),
             &backdrop_type as *const _ as *const _,
             std::mem::size_of::<u32>() as u32,
         );
-        let dwm_ok = hr.is_ok();
+        if hr.is_ok() {
+            return true;
+        }
 
-        // 2. Windows 10 SetWindowCompositionAttribute accent policy (WCA_ACCENT_POLICY)
+        // 4. Fallback for Windows 10: SetWindowCompositionAttribute with WCA_ACCENT_POLICY AccentEnableAcrylicblurbehind
         let tint = tint_abgr.unwrap_or(0x01000000); // minimal alpha tint to activate DWM composition
         let policy = ACCENT_POLICY {
             accent_state: ACCENT_STATE::AccentEnableAcrylicblurbehind,
@@ -432,8 +455,18 @@ pub fn apply_acrylic(hwnd: HWND, tint_abgr: Option<u32>) -> bool {
             animation_id: 0,
         };
         let wca_ok = set_window_accent_policy(hwnd, &policy);
+        if wca_ok {
+            return true;
+        }
 
-        dwm_ok || wca_ok
+        // 5. Fallback to classic DwmEnableBlurBehindWindow
+        let bb = DWM_BLURBEHIND {
+            dwFlags: DWM_BB_ENABLE,
+            fEnable: windows::Win32::Foundation::BOOL(1),
+            hRgnBlur: windows::Win32::Graphics::Gdi::HRGN(std::ptr::null_mut()),
+            fTransitionOnMaximized: windows::Win32::Foundation::BOOL(0),
+        };
+        DwmEnableBlurBehindWindow(hwnd, &bb).is_ok()
     }
 }
 
