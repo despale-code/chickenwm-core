@@ -353,7 +353,7 @@ pub const DEFAULT_FILES_CSS: &str = r#"/* ChickenWM Keyboard-First File Explorer
     --accent-color: #33ccff;
     --selected-bg: rgba(51, 204, 255, 0.22);
     --border-color: rgba(255, 255, 255, 0.08);
-    --border-radius: 8px;
+    --border-radius: 12px;
     --font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
     --font-size: 14px;
     --row-height: 28px;
