@@ -47,7 +47,7 @@ macro_rules! scheme {
 }
 
 /// The built-in presets, in the order the settings app shows them.
-pub const PRESETS: [Preset; 14] = [
+pub const PRESETS: [Preset; 15] = [
     Preset {
         id: "dracula",
         name: "Dracula",
@@ -187,6 +187,16 @@ pub const PRESETS: [Preset; 14] = [
             0xcf222e, 0x1a7f37, 0x9a6700, 0xbc4c00, 0x8250df, 0x0969da, 0x1b7c83),
         dark: scheme!(0x0d1117, 0x161b22, 0x010409, 0xc9d1d9, 0x8b949e, 0x58a6ff,
             0xff7b72, 0x3fb950, 0xd29922, 0xf0883e, 0xbc8cff, 0x58a6ff, 0x39c5cf),
+    },
+    Preset {
+        id: "vs2019",
+        name: "VS 2019",
+        light_name: "VS 2019 Light",
+        dark_name: "VS 2019 Dark",
+        light: scheme!(0xffffff, 0xf5f5f5, 0xeeeef2, 0x1e1e1e, 0x717171, 0x007acc,
+            0xcd3131, 0x008000, 0x795e26, 0xa31515, 0xaf00db, 0x001080, 0x0070c1),
+        dark: scheme!(0x1e1e1e, 0x252526, 0x2d2d30, 0xdcdcdc, 0x9e9e9e, 0x007acc,
+            0xf44747, 0x4ec9b0, 0xdcdcaa, 0xce9178, 0xc586c0, 0x569cd6, 0x9cdcfe),
     },
 ];
 
