@@ -72,19 +72,45 @@ pub enum IconRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IconTheme {
     pub name: String,
-    dir: Option<PathBuf>,
+    pub dir: Option<PathBuf>,
+    pub inherits: Vec<String>,
 }
 
 impl IconTheme {
     pub fn load(name: &str) -> Self {
         let name = name.trim();
-        let dir = if name.is_empty() || name.eq_ignore_ascii_case("system") {
-            None
+        if name.is_empty() || name.eq_ignore_ascii_case("system") {
+            return Self {
+                name: "system".to_string(),
+                dir: None,
+                inherits: Vec::new(),
+            };
+        }
+        let d = icons_root().join(name);
+        let (dir, inherits) = if d.is_dir() {
+            let mut inh = Vec::new();
+            if let Ok(content) = std::fs::read_to_string(d.join("index.theme")) {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if let Some(val) = trimmed.strip_prefix("Inherits=").or_else(|| trimmed.strip_prefix("inherits=")) {
+                        for item in val.split([',', ';']) {
+                            let item = item.trim();
+                            if !item.is_empty() && !inh.iter().any(|x: &String| x.eq_ignore_ascii_case(item)) {
+                                inh.push(item.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            (Some(d), inh)
         } else {
-            let d = icons_root().join(name);
-            d.is_dir().then_some(d)
+            (None, Vec::new())
         };
-        Self { name: name.to_string(), dir }
+        Self {
+            name: name.to_string(),
+            dir,
+            inherits,
+        }
     }
 
     /// The theme selected in `chickenwm.conf`.
@@ -101,31 +127,206 @@ impl IconTheme {
 
     pub fn resolve(&self, req: &IconRequest) -> Option<PathBuf> {
         let dir = self.dir.as_ref()?;
-        let candidates: Vec<String> = match req {
-            IconRequest::Folder => vec!["folder".into()],
-            IconRequest::SpecialFolder(s) => vec![format!("folder-{s}"), "folder".into()],
-            IconRequest::Drive => vec!["drive".into()],
-            IconRequest::File(ext) => {
-                let mut v = Vec::new();
-                if !ext.is_empty() {
-                    v.push(format!("ext-{ext}"));
+        if let Some(p) = resolve_in_dir(dir, req) {
+            return Some(p);
+        }
+        for inh in &self.inherits {
+            if !inh.eq_ignore_ascii_case(&self.name) {
+                if let Some(p) = IconTheme::load(inh).resolve(req) {
+                    return Some(p);
                 }
-                v.push(category_for_ext(ext).to_string());
-                v.push("file".into());
-                v
             }
-            IconRequest::App(stem) => vec![format!("app-{stem}")],
-        };
-        candidates
-            .into_iter()
-            .map(|n| dir.join(format!("{n}.png")))
-            .find(|p| p.is_file())
+        }
+        if !self.name.eq_ignore_ascii_case("chickenwm") {
+            let chicken = IconTheme::load("chickenwm");
+            if let Some(d) = chicken.dir.as_ref() {
+                if let Some(p) = resolve_in_dir(d, req) {
+                    return Some(p);
+                }
+            }
+        }
+        None
     }
+}
+
+fn candidate_names_and_contexts(req: &IconRequest) -> Vec<(&'static str, String)> {
+    match req {
+        IconRequest::Folder => vec![
+            ("places", "folder".into()),
+            ("places", "default-folder".into()),
+            ("places", "inode-directory".into()),
+            ("", "folder".into()),
+        ],
+        IconRequest::SpecialFolder(s) => {
+            let mut v = Vec::new();
+            match s.as_str() {
+                "home" => {
+                    v.push(("places", "user-home".into()));
+                    v.push(("places", "folder-home".into()));
+                    v.push(("places", "folder_home".into()));
+                }
+                "desktop" => {
+                    v.push(("places", "user-desktop".into()));
+                    v.push(("places", "folder-desktop".into()));
+                    v.push(("places", "desktop".into()));
+                }
+                "downloads" => {
+                    v.push(("places", "folder-download".into()));
+                    v.push(("places", "folder-downloads".into()));
+                }
+                "documents" => {
+                    v.push(("places", "folder-documents".into()));
+                    v.push(("places", "folder-document".into()));
+                }
+                "pictures" => {
+                    v.push(("places", "folder-pictures".into()));
+                    v.push(("places", "folder-images".into()));
+                    v.push(("places", "folder-photos".into()));
+                }
+                "music" => {
+                    v.push(("places", "folder-music".into()));
+                    v.push(("places", "folder-sound".into()));
+                    v.push(("places", "folder-audio".into()));
+                }
+                "videos" => {
+                    v.push(("places", "folder-videos".into()));
+                    v.push(("places", "folder-video".into()));
+                    v.push(("places", "folder-movies".into()));
+                }
+                _ => {}
+            }
+            v.push(("", format!("folder-{s}")));
+            v.push(("places", "folder".into()));
+            v.push(("", "folder".into()));
+            v
+        }
+        IconRequest::Drive => vec![
+            ("devices", "drive-harddisk".into()),
+            ("devices", "harddrive".into()),
+            ("devices", "drive-removable-media".into()),
+            ("devices", "disks".into()),
+            ("", "drive".into()),
+        ],
+        IconRequest::File(ext) => {
+            let mut v = Vec::new();
+            let cat = category_for_ext(ext);
+            if !ext.is_empty() {
+                v.push(("", format!("ext-{ext}")));
+                match ext.as_str() {
+                    "pdf" => {
+                        v.push(("mimetypes", "application-pdf".into()));
+                        v.push(("mimetypes", "pdf".into()));
+                    }
+                    "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" => {
+                        v.push(("mimetypes", format!("image-{ext}")));
+                        v.push(("mimetypes", "image-x-generic".into()));
+                    }
+                    "mp4" | "mkv" | "webm" | "mov" | "avi" => {
+                        v.push(("mimetypes", format!("video-{ext}")));
+                        v.push(("mimetypes", "video-x-generic".into()));
+                    }
+                    "mp3" | "flac" | "wav" | "ogg" | "m4a" => {
+                        v.push(("mimetypes", "audio-x-generic".into()));
+                    }
+                    "zip" | "7z" | "rar" | "tar" | "gz" | "bz2" | "xz" => {
+                        v.push(("mimetypes", "package-x-generic".into()));
+                        v.push(("mimetypes", "application-zip".into()));
+                    }
+                    "rs" | "py" | "js" | "ts" | "c" | "cpp" | "go" | "html" | "css" => {
+                        v.push(("mimetypes", format!("text-x-{ext}")));
+                        v.push(("mimetypes", "text-x-script".into()));
+                        v.push(("mimetypes", "text-x-source".into()));
+                    }
+                    "exe" | "msi" | "bat" | "cmd" => {
+                        v.push(("mimetypes", "application-x-executable".into()));
+                        v.push(("mimetypes", "application-x-ms-dos-executable".into()));
+                    }
+                    "txt" | "md" | "log" => {
+                        v.push(("mimetypes", "text-plain".into()));
+                        v.push(("mimetypes", "text-x-generic".into()));
+                    }
+                    "doc" | "docx" | "odt" | "rtf" => {
+                        v.push(("mimetypes", "x-office-document".into()));
+                        v.push(("mimetypes", "application-msword".into()));
+                    }
+                    "ttf" | "otf" | "woff" => {
+                        v.push(("mimetypes", "font-x-generic".into()));
+                    }
+                    "iso" | "img" => {
+                        v.push(("mimetypes", "media-optical".into()));
+                        v.push(("mimetypes", "application-x-iso9660-image".into()));
+                    }
+                    _ => {}
+                }
+            }
+            v.push(("", cat.to_string()));
+            v.push(("mimetypes", format!("{cat}-x-generic")));
+            v.push(("mimetypes", "text-x-generic".into()));
+            v.push(("", "file".into()));
+            v.push(("mimetypes", "empty".into()));
+            v
+        }
+        IconRequest::App(stem) => {
+            vec![
+                ("apps", stem.clone()),
+                ("apps", stem.replace(' ', "-")),
+                ("", format!("app-{stem}")),
+                ("apps", format!("application-x-{stem}")),
+            ]
+        }
+    }
+}
+
+fn resolve_in_dir(dir: &Path, req: &IconRequest) -> Option<PathBuf> {
+    let candidates = candidate_names_and_contexts(req);
+    const SIZES: [&str; 7] = ["scalable", "64x64", "48x48", "32x32", "24x24", "16x16", "128x128"];
+    const EXTS: [&str; 2] = ["svg", "png"];
+
+    for (context, name) in candidates {
+        for ext in EXTS {
+            // 1. Direct root file: <theme>/<name>.<ext> (only if not an app context)
+            if context != "apps" {
+                let p1 = dir.join(format!("{name}.{ext}"));
+                if p1.is_file() {
+                    return Some(p1);
+                }
+            }
+            // 2. Direct context folder: <theme>/<context>/<name>.<ext>
+            if !context.is_empty() {
+                let p2 = dir.join(context).join(format!("{name}.{ext}"));
+                if p2.is_file() {
+                    return Some(p2);
+                }
+            }
+            // 3. Size folders: <theme>/<size>/<context>/<name>.<ext> or <theme>/<size>/<name>.<ext>
+            for sz in SIZES {
+                if !context.is_empty() {
+                    let p3 = dir.join(sz).join(context).join(format!("{name}.{ext}"));
+                    if p3.is_file() {
+                        return Some(p3);
+                    }
+                }
+                if context != "apps" {
+                    let p4 = dir.join(sz).join(format!("{name}.{ext}"));
+                    if p4.is_file() {
+                        return Some(p4);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Folder names under `icons/` (plus `system`), for theme pickers.
 pub fn available_themes() -> Vec<String> {
-    let mut v = vec!["system".to_string(), "chickenwm".to_string()];
+    let mut v = vec![
+        "system".to_string(),
+        "chickenwm".to_string(),
+        "lucide".to_string(),
+        "font-awesome".to_string(),
+        "papirus".to_string(),
+    ];
     if let Ok(rd) = std::fs::read_dir(icons_root()) {
         for e in rd.flatten() {
             if e.path().is_dir() {
@@ -137,6 +338,168 @@ pub fn available_themes() -> Vec<String> {
         }
     }
     v
+}
+
+/// Recursively copies all files and subdirectories from `src` to `dst`.
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let target = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_all(&entry.path(), &target)?;
+        } else if file_type.is_file() {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
+fn sanitize_theme_name(name: &str) -> String {
+    let clean: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let s = clean.trim_matches('-');
+    if s.is_empty() {
+        "custom-theme".to_string()
+    } else {
+        s.to_lowercase()
+    }
+}
+
+fn find_theme_root(base: &Path) -> Option<PathBuf> {
+    if base.join("index.theme").exists() || base.join("places").is_dir() || base.join("folder.svg").exists() || base.join("folder.png").exists() {
+        return Some(base.to_path_buf());
+    }
+    if let Ok(entries) = std::fs::read_dir(base) {
+        let dirs: Vec<PathBuf> = entries.flatten().filter_map(|e| e.path().is_dir().then_some(e.path())).collect();
+        for d in &dirs {
+            if d.join("index.theme").exists() || d.join("places").is_dir() || d.join("folder.svg").exists() || d.join("folder.png").exists() {
+                return Some(d.clone());
+            }
+        }
+        if dirs.len() == 1 {
+            return find_theme_root(&dirs[0]);
+        }
+    }
+    None
+}
+
+fn extract_theme_name(index_content: &str) -> Option<String> {
+    for line in index_content.lines() {
+        let t = line.trim();
+        if let Some(val) = t.strip_prefix("Name=").or_else(|| t.strip_prefix("name=")) {
+            let n = val.trim();
+            if !n.is_empty() {
+                return Some(n.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Import a Linux icon theme from a folder, .zip, .tar.gz, .tgz, or .tar file.
+/// Extracts/copies to `~/.config/chickenwm/icons/<theme-name>` and returns the theme name.
+pub fn import_theme_from_path(source: &Path) -> Result<String> {
+    if !source.exists() {
+        anyhow::bail!("Source path does not exist: {}", source.display());
+    }
+
+    let temp_dir = std::env::temp_dir().join(format!("chickenwm_icon_import_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let is_dir = source.is_dir();
+    let path_str = source.to_string_lossy().to_ascii_lowercase();
+
+    if is_dir {
+        copy_dir_all(source, &temp_dir)?;
+    } else if path_str.ends_with(".zip") {
+        let file = std::fs::File::open(source)?;
+        let mut archive = zip::ZipArchive::new(file)?;
+        archive.extract(&temp_dir)?;
+    } else if path_str.ends_with(".tar.gz") || path_str.ends_with(".tgz") {
+        let file = std::fs::File::open(source)?;
+        let tar = flate2::read::GzDecoder::new(file);
+        let mut archive = tar::Archive::new(tar);
+        archive.unpack(&temp_dir)?;
+    } else if path_str.ends_with(".tar") {
+        let file = std::fs::File::open(source)?;
+        let mut archive = tar::Archive::new(file);
+        archive.unpack(&temp_dir)?;
+    } else {
+        anyhow::bail!("Unsupported icon theme archive format: {}. Expected folder, .zip, or .tar.gz", source.display());
+    }
+
+    let theme_root = find_theme_root(&temp_dir).unwrap_or(temp_dir.clone());
+    let theme_name = if let Ok(content) = std::fs::read_to_string(theme_root.join("index.theme")) {
+        extract_theme_name(&content).unwrap_or_else(|| {
+            source.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "custom-icons".into())
+        })
+    } else {
+        source.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "custom-icons".into())
+    };
+
+    let sanitized = sanitize_theme_name(&theme_name);
+    let target = icons_root().join(&sanitized);
+    if target.exists() {
+        let _ = std::fs::remove_dir_all(&target);
+    }
+    std::fs::create_dir_all(&target)?;
+    copy_dir_all(&theme_root, &target)?;
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    Ok(sanitized)
+}
+
+/// Ensures all predetermined bundled icon packs (`lucide`, `font-awesome`, `papirus`, `chickenwm`)
+/// exist in `~/.config/chickenwm/icons/`.
+pub fn ensure_builtin_themes(p: &Palette) -> Result<()> {
+    let _ = generate_builtin(p);
+
+    let lucide_dir = icons_root().join("lucide");
+    if !lucide_dir.join("folder.svg").exists() {
+        std::fs::create_dir_all(&lucide_dir)?;
+        for asset in crate::icon_theme_presets::LUCIDE_ICONS {
+            let target = lucide_dir.join(asset.rel_path);
+            if let Some(parent) = target.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&target, asset.svg);
+        }
+    }
+
+    let fa_dir = icons_root().join("font-awesome");
+    if !fa_dir.join("folder.svg").exists() {
+        std::fs::create_dir_all(&fa_dir)?;
+        for asset in crate::icon_theme_presets::FONT_AWESOME_ICONS {
+            let target = fa_dir.join(asset.rel_path);
+            if let Some(parent) = target.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&target, asset.svg);
+        }
+    }
+
+    let papirus_dir = icons_root().join("papirus");
+    if !papirus_dir.join("index.theme").exists() {
+        std::fs::create_dir_all(papirus_dir.join("places"))?;
+        std::fs::create_dir_all(papirus_dir.join("mimetypes"))?;
+        std::fs::create_dir_all(papirus_dir.join("devices"))?;
+        std::fs::create_dir_all(papirus_dir.join("apps"))?;
+        let _ = std::fs::write(papirus_dir.join("index.theme"), crate::icon_theme_presets::PAPIRUS_THEME_INDEX);
+        for asset in crate::icon_theme_presets::PAPIRUS_ICONS {
+            let target = papirus_dir.join(asset.rel_path);
+            if let Some(parent) = target.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&target, asset.svg);
+        }
+    }
+
+    Ok(())
 }
 
 // ───────────────────────────── built-in icon set ─────────────────────────────
@@ -412,6 +775,33 @@ fn drive_icon(p: &Palette) -> Canvas {
     c
 }
 
+/// Render SVG data to an RGBA pixel buffer at the specified size.
+pub fn render_svg_to_rgba(svg_data: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
+    use resvg::{tiny_skia, usvg};
+    let opt = usvg::Options::default();
+    let tree = usvg::Tree::from_data(svg_data, &opt).ok()?;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)?;
+    let sx = width as f32 / tree.size().width();
+    let sy = height as f32 / tree.size().height();
+    let transform = tiny_skia::Transform::from_scale(sx, sy);
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    Some(pixmap.take())
+}
+
+/// Load an icon file (.svg or raster image like .png), rasterizing/resizing to `(side, side)`.
+pub fn load_icon_image(path: &Path, side: u32) -> Option<(usize, usize, Vec<u8>)> {
+    let is_svg = path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("svg")).unwrap_or(false);
+    if is_svg {
+        let bytes = std::fs::read(path).ok()?;
+        let rgba = render_svg_to_rgba(&bytes, side, side)?;
+        Some((side as usize, side as usize, rgba))
+    } else {
+        let img = image::open(path).ok()?;
+        let img = img.resize(side, side, image::imageops::FilterType::Lanczos3).to_rgba8();
+        Some((img.width() as usize, img.height() as usize, img.into_raw()))
+    }
+}
+
 fn save_png(canvas: &Canvas, path: &Path) -> Result<()> {
     let img = image::RgbaImage::from_raw(SIZE, SIZE, canvas.to_rgba8())
         .ok_or_else(|| anyhow::anyhow!("icon buffer size"))?;
@@ -457,13 +847,52 @@ mod tests {
         for f in ["folder.png", "code.png", "file.png", "ext-rs.png"] {
             std::fs::write(dir.join(f), b"x").unwrap();
         }
-        let theme = IconTheme { name: "t".into(), dir: Some(dir.clone()) };
+        let theme = IconTheme { name: "t".into(), dir: Some(dir.clone()), inherits: Vec::new() };
         assert_eq!(theme.resolve(&IconRequest::File("rs".into())), Some(dir.join("ext-rs.png")));
         assert_eq!(theme.resolve(&IconRequest::File("py".into())), Some(dir.join("code.png")));
         assert_eq!(theme.resolve(&IconRequest::File("zip".into())), Some(dir.join("file.png")));
         assert_eq!(theme.resolve(&IconRequest::SpecialFolder("music".into())), Some(dir.join("folder.png")));
         assert_eq!(theme.resolve(&IconRequest::App("code".into())), None);
         assert!(IconTheme::load("system").is_system());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_svg_rendering_and_loader() {
+        let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#ff0000"/></svg>"##;
+        let rgba = render_svg_to_rgba(svg, 32, 32).expect("render svg");
+        assert_eq!(rgba.len(), 32 * 32 * 4);
+
+        let temp_svg = std::env::temp_dir().join("chickenwm_test_icon.svg");
+        std::fs::write(&temp_svg, svg).unwrap();
+        let loaded = load_icon_image(&temp_svg, 48).expect("load icon image");
+        assert_eq!(loaded.0, 48);
+        assert_eq!(loaded.1, 48);
+        assert_eq!(loaded.2.len(), 48 * 48 * 4);
+        let _ = std::fs::remove_file(temp_svg);
+    }
+
+    #[test]
+    fn test_freedesktop_xdg_resolution() {
+        let dir = std::env::temp_dir().join("chickenwm-xdg-test-theme");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("places")).unwrap();
+        std::fs::create_dir_all(dir.join("mimetypes")).unwrap();
+        std::fs::create_dir_all(dir.join("devices")).unwrap();
+
+        std::fs::write(dir.join("places/folder.svg"), b"<svg/>").unwrap();
+        std::fs::write(dir.join("places/user-home.svg"), b"<svg/>").unwrap();
+        std::fs::write(dir.join("places/folder-download.svg"), b"<svg/>").unwrap();
+        std::fs::write(dir.join("devices/drive-harddisk.svg"), b"<svg/>").unwrap();
+        std::fs::write(dir.join("mimetypes/application-pdf.svg"), b"<svg/>").unwrap();
+
+        let theme = IconTheme { name: "xdg-test".into(), dir: Some(dir.clone()), inherits: Vec::new() };
+        assert_eq!(theme.resolve(&IconRequest::Folder), Some(dir.join("places/folder.svg")));
+        assert_eq!(theme.resolve(&IconRequest::SpecialFolder("home".into())), Some(dir.join("places/user-home.svg")));
+        assert_eq!(theme.resolve(&IconRequest::SpecialFolder("downloads".into())), Some(dir.join("places/folder-download.svg")));
+        assert_eq!(theme.resolve(&IconRequest::Drive), Some(dir.join("devices/drive-harddisk.svg")));
+        assert_eq!(theme.resolve(&IconRequest::File("pdf".into())), Some(dir.join("mimetypes/application-pdf.svg")));
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

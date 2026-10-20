@@ -575,7 +575,7 @@ pub fn apply_theme(theme: &ThemeConfig) -> Result<Palette> {
         let app_palette = app_of_file(file).map_or(palette, |app| theme.palette_for(app));
         apply_palette_to_file(&app_palette, &dir.join(file))?;
     }
-    crate::icon_theme::generate_builtin(&palette)?;
+    crate::icon_theme::ensure_builtin_themes(&palette)?;
     Ok(palette)
 }
 

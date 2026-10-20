@@ -20,6 +20,7 @@ pub mod frame_scheduler;
 pub mod headless;
 pub mod handles;
 pub mod icon_theme;
+pub mod icon_theme_presets;
 pub mod instance;
 pub mod ipc;
 pub mod monitor;
@@ -105,8 +106,6 @@ pub fn bootstrap_config_and_themes() -> Result<(config::ConfigDocument, config::
     for f in missing {
         let _ = theme::apply_palette_to_file(&palette, &dir.join(f));
     }
-    if !icon_theme::icons_root().join("chickenwm").join("folder.png").exists() {
-        let _ = icon_theme::generate_builtin(&palette);
-    }
+    let _ = icon_theme::ensure_builtin_themes(&palette);
     Ok((doc, cfg))
 }
