@@ -5,7 +5,7 @@
 //! - Window edge resize handles for all 8 directions (North, South, East, West, corners).
 
 #[cfg(feature = "egui")]
-use eframe::egui::{self, Color32, CursorIcon, Pos2, Rect, ResizeDirection, Stroke, Vec2};
+use egui::{self, Color32, CursorIcon, Pos2, Rect, ResizeDirection, Stroke, Vec2};
 
 #[cfg(feature = "egui")]
 pub fn paint_window_gradient_border(painter: &egui::Painter, screen: Rect, radius: f32) {
@@ -51,7 +51,7 @@ pub fn paint_window_gradient_border(painter: &egui::Painter, screen: Rect, radiu
         let mid_y = (p1.y + p2.y) * 0.5;
         let t = ((mid_y - top_y) / h).clamp(0.0, 1.0);
         // Gradient from #2b2b2b (43, 43, 43) at top to #1f1f1f (31, 31, 31) at bottom
-        let val = (43.0 + (31.0 - 43.0) * t).round() as u8;
+        let val = (43.0_f32 + (31.0_f32 - 43.0_f32) * t).round() as u8;
         let col = Color32::from_rgb(val, val, val);
         painter.line_segment([p1, p2], Stroke::new(1.0_f32, col));
     }

@@ -206,3 +206,227 @@ pub fn remove_admin_task() -> Result<()> {
     }
     Ok(())
 }
+
+/// Finds the process ID of the interactive unelevated user shell (e.g. `explorer.exe`).
+pub fn find_shell_process_id() -> Option<u32> {
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{GetShellWindow, GetWindowThreadProcessId};
+
+        let hwnd = GetShellWindow();
+        if !hwnd.is_invalid() {
+            let mut pid = 0u32;
+            let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            if pid != 0 {
+                return Some(pid);
+            }
+        }
+
+        // Fallback: search process snapshot for explorer.exe
+        use windows::Win32::System::Diagnostics::ToolHelp::*;
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        if Process32FirstW(snap, &mut entry).is_ok() {
+            loop {
+                let name = String::from_utf16_lossy(&entry.szExeFile)
+                    .trim_matches('\0')
+                    .to_lowercase();
+                if name == "explorer.exe" {
+                    let _ = CloseHandle(snap);
+                    return Some(entry.th32ProcessID);
+                }
+                if Process32NextW(snap, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = CloseHandle(snap);
+        None
+    }
+}
+
+/// Spawns a process as a child of `parent_pid` (typically `explorer.exe`), forcing it to inherit
+/// the parent process's unelevated (standard user / medium integrity) security token.
+fn spawn_as_child_of_process(parent_pid: u32, target: &Path, args: Option<&str>) -> Result<()> {
+    unsafe {
+        use windows::Win32::System::Threading::*;
+
+        let h_parent = OpenProcess(PROCESS_CREATE_PROCESS, false, parent_pid)
+            .map_err(|e| anyhow!("OpenProcess(PROCESS_CREATE_PROCESS) failed: {e}"))?;
+
+        let mut size = 0usize;
+        let _ = InitializeProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut()), 1, 0, &mut size);
+        let mut attr_memory = vec![0u8; size];
+        let attr_list = LPPROC_THREAD_ATTRIBUTE_LIST(attr_memory.as_mut_ptr() as *mut _);
+
+        if InitializeProcThreadAttributeList(attr_list, 1, 0, &mut size).is_err() {
+            let _ = CloseHandle(h_parent);
+            bail!("InitializeProcThreadAttributeList failed");
+        }
+
+        const PROC_THREAD_ATTRIBUTE_PARENT_PROCESS: usize = 0x00020000;
+        let mut parent_handle_val = h_parent;
+        let update_ok = UpdateProcThreadAttribute(
+            attr_list,
+            0,
+            PROC_THREAD_ATTRIBUTE_PARENT_PROCESS,
+            Some(&mut parent_handle_val as *mut _ as *const _),
+            std::mem::size_of::<HANDLE>(),
+            None,
+            None,
+        );
+
+        if update_ok.is_err() {
+            DeleteProcThreadAttributeList(attr_list);
+            let _ = CloseHandle(h_parent);
+            bail!("UpdateProcThreadAttribute failed");
+        }
+
+        let mut siex = STARTUPINFOEXW::default();
+        siex.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
+        siex.lpAttributeList = attr_list;
+
+        let mut pi = PROCESS_INFORMATION::default();
+
+        let is_exe = target.extension().map_or(false, |ext| {
+            ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
+        });
+
+        let target_str = target.to_string_lossy();
+        let (cmd_str, creation_flags) = if is_exe && args.is_none() {
+            (format!("\"{}\"", target_str), EXTENDED_STARTUPINFO_PRESENT)
+        } else if is_exe && args.is_some() {
+            (format!("\"{}\" {}", target_str, args.unwrap()), EXTENDED_STARTUPINFO_PRESENT)
+        } else {
+            (
+                format!("cmd.exe /c start \"\" \"{}\" {}", target_str, args.unwrap_or("")),
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW,
+            )
+        };
+
+        let mut cmd_w: Vec<u16> = cmd_str.encode_utf16().chain(std::iter::once(0)).collect();
+        let work_dir = target.parent().filter(|p| p.is_dir()).map(|p| wide(&p.to_string_lossy()));
+
+        let created = CreateProcessW(
+            None,
+            windows::core::PWSTR(cmd_w.as_mut_ptr()),
+            None,
+            None,
+            false,
+            creation_flags,
+            None,
+            work_dir.as_ref().map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr())),
+            &siex.StartupInfo,
+            &mut pi,
+        );
+
+        DeleteProcThreadAttributeList(attr_list);
+        let _ = CloseHandle(h_parent);
+
+        if created.is_err() {
+            bail!("CreateProcessW failed: {}", std::io::Error::last_os_error());
+        }
+
+        let _ = CloseHandle(pi.hProcess);
+        let _ = CloseHandle(pi.hThread);
+        Ok(())
+    }
+}
+
+/// Opens an app, document, folder, shortcut, or URI.
+/// If `verb == Some("runas")`, launches elevated via UAC prompt.
+/// If `verb != Some("runas")` and the current process is running elevated as Administrator,
+/// this automatically de-elevates by spawning the child under Explorer's unelevated token,
+/// ensuring the user's applications never unexpectedly inherit Administrator privileges!
+pub fn shell_open_unelevated(target: &Path, args: Option<&str>, verb: Option<&str>) {
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let is_admin = verb.map_or(false, |v| v.eq_ignore_ascii_case("runas"));
+    if is_admin {
+        let args_vec: Vec<&str> = args.into_iter().collect();
+        let _ = run_elevated(target, &args_vec, false);
+        return;
+    }
+
+    if !is_elevated() {
+        let file = wide(&target.to_string_lossy());
+        let params = args.map(wide);
+        let verb_w = wide("open");
+        let dir = target.parent().filter(|p| p.is_dir()).map(|p| wide(&p.to_string_lossy()));
+        unsafe {
+            let _ = ShellExecuteW(
+                None,
+                PCWSTR(verb_w.as_ptr()),
+                PCWSTR(file.as_ptr()),
+                params.as_ref().map_or(PCWSTR::null(), |p| PCWSTR(p.as_ptr())),
+                dir.as_ref().map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr())),
+                SW_SHOWNORMAL,
+            );
+        }
+        return;
+    }
+
+    // Process is elevated. De-elevate through explorer.exe if available.
+    if let Some(explorer_pid) = find_shell_process_id() {
+        if spawn_as_child_of_process(explorer_pid, target, args).is_ok() {
+            return;
+        }
+    }
+
+    // Backstop fallback if Explorer is missing
+    let file = wide(&target.to_string_lossy());
+    let params = args.map(wide);
+    let verb_w = wide("open");
+    let dir = target.parent().filter(|p| p.is_dir()).map(|p| wide(&p.to_string_lossy()));
+    unsafe {
+        let _ = ShellExecuteW(
+            None,
+            PCWSTR(verb_w.as_ptr()),
+            PCWSTR(file.as_ptr()),
+            params.as_ref().map_or(PCWSTR::null(), |p| PCWSTR(p.as_ptr())),
+            dir.as_ref().map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr())),
+            SW_SHOWNORMAL,
+        );
+    }
+}
+
+/// Spawns a command string as a standard user process when running elevated.
+pub fn spawn_unelevated(cmd_line: &str, work_dir: Option<&Path>) -> Result<()> {
+    if !is_elevated() {
+        let mut parts = cmd_line.split_whitespace();
+        if let Some(prog) = parts.next() {
+            let mut cmd = std::process::Command::new(prog);
+            cmd.args(parts);
+            if let Some(d) = work_dir {
+                cmd.current_dir(d);
+            }
+            cmd.spawn()?;
+            return Ok(());
+        }
+        bail!("empty command");
+    }
+
+    if let Some(explorer_pid) = find_shell_process_id() {
+        let prog = cmd_line.split_whitespace().next().unwrap_or(cmd_line);
+        let path = Path::new(prog);
+        let args = cmd_line.strip_prefix(prog).map(|s| s.trim()).filter(|s| !s.is_empty());
+        if spawn_as_child_of_process(explorer_pid, path, args).is_ok() {
+            return Ok(());
+        }
+    }
+
+    let mut parts = cmd_line.split_whitespace();
+    if let Some(prog) = parts.next() {
+        let mut cmd = std::process::Command::new(prog);
+        cmd.args(parts);
+        if let Some(d) = work_dir {
+            cmd.current_dir(d);
+        }
+        cmd.spawn()?;
+        return Ok(());
+    }
+    bail!("empty command")
+}
