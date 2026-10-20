@@ -404,6 +404,39 @@ pub fn set_window_accent_policy(hwnd: HWND, policy: &ACCENT_POLICY) -> bool {
     unsafe { fn_set(hwnd, &data).as_bool() }
 }
 
+/// Applies acrylic blur-behind backdrop to a Win32 HWND.
+/// Supports both Windows 11 (DWMWA_SYSTEMBACKDROP_TYPE = 3 for Acrylic)
+/// and Windows 10 (SetWindowCompositionAttribute with WCA_ACCENT_POLICY AccentEnableAcrylicblurbehind).
+pub fn apply_acrylic_raw(hwnd: *mut std::ffi::c_void, tint_abgr: Option<u32>) -> bool {
+    apply_acrylic(HWND(hwnd), tint_abgr)
+}
+
+pub fn apply_acrylic(hwnd: HWND, tint_abgr: Option<u32>) -> bool {
+    unsafe {
+        // 1. Windows 11 DWM backdrop API (DWMWA_SYSTEMBACKDROP_TYPE = 38, DWMSBT_TRANSIENTWINDOW = 3 for Acrylic)
+        let backdrop_type: u32 = 3; // DWMSBT_TRANSIENTWINDOW (Acrylic)
+        let hr = DwmSetWindowAttribute(
+            hwnd,
+            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(38),
+            &backdrop_type as *const _ as *const _,
+            std::mem::size_of::<u32>() as u32,
+        );
+        let dwm_ok = hr.is_ok();
+
+        // 2. Windows 10 SetWindowCompositionAttribute accent policy (WCA_ACCENT_POLICY)
+        let tint = tint_abgr.unwrap_or(0x01000000); // minimal alpha tint to activate DWM composition
+        let policy = ACCENT_POLICY {
+            accent_state: ACCENT_STATE::AccentEnableAcrylicblurbehind,
+            accent_flags: 2, // draw all borders
+            gradient_color: tint,
+            animation_id: 0,
+        };
+        let wca_ok = set_window_accent_policy(hwnd, &policy);
+
+        dwm_ok || wca_ok
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
