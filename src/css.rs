@@ -286,14 +286,14 @@ impl CssStyleSheet {
 /// Phase 10.3: Sleek default dark-mode CSS for `chickenwm-launcher` (`~/.config/chickenwm/launcher.css`).
 pub const DEFAULT_LAUNCHER_CSS: &str = r#"/* ChickenWM Application Launcher Theme (~/.config/chickenwm/launcher.css) */
 :root {
-    --bg-color: rgba(24, 24, 37, 0.94);
-    --surface-color: rgba(30, 30, 46, 0.95);
+    --bg-color: rgba(24, 24, 37, 0.75);
+    --surface-color: rgba(30, 30, 46, 0.78);
     --fg-color: #cdd6f4;
     --subtext-color: #a6adc8;
     --accent-color: #33ccff;
     --accent-secondary: #00ff99;
     --selected-bg: rgba(51, 204, 255, 0.18);
-    --border-color: rgba(51, 204, 255, 0.85);
+    --border-color: rgba(255, 255, 255, 0.12);
     --border-radius: 16px;
     --border-width: 2px;
     --font-family: "Segoe UI", "Inter", sans-serif;
