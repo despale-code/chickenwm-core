@@ -18,7 +18,7 @@ use windows::Win32::Graphics::DirectComposition::IDCompositionVisual2;
 use windows::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DwmEnableBlurBehindWindow,
     DWMWA_NCRENDERING_POLICY, DWMWA_WINDOW_CORNER_PREFERENCE,
-    DWMNCRP_DISABLED, DWMNCRP_ENABLED, DWMWCP_DEFAULT, DWMWCP_DONOTROUND,
+    DWMNCRP_ENABLED, DWMWCP_DEFAULT, DWMWCP_DONOTROUND,
     DWM_THUMBNAIL_PROPERTIES, DWM_BLURBEHIND, DWM_BB_ENABLE,
 };
 use windows::Win32::UI::Controls::MARGINS;
@@ -205,14 +205,7 @@ pub fn set_overlay_capture_exclusion(hwnd: HWND) -> windows::core::Result<()> {
 /// 3. Marks the window with `ChickenWMManagedVisual` property for panic recovery.
 pub fn attach_in_place_hit_test(hwnd: HWND) -> windows::core::Result<()> {
     unsafe {
-        // Strip native chrome and corner rounding
-        let policy = DWMNCRP_DISABLED;
-        let _ = DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_NCRENDERING_POLICY,
-            &policy as *const _ as *const _,
-            std::mem::size_of_val(&policy) as u32,
-        );
+        // Strip native corner rounding
         let corner = DWMWCP_DONOTROUND;
         let _ = DwmSetWindowAttribute(
             hwnd,
@@ -454,13 +447,6 @@ pub fn apply_acrylic(hwnd: HWND, tint_abgr: Option<u32>) -> bool {
             &none as *const _ as *const _,
             std::mem::size_of_val(&none) as u32,
         );
-        let policy = DWMNCRP_DISABLED;
-        let _ = DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_NCRENDERING_POLICY,
-            &policy as *const _ as *const _,
-            std::mem::size_of_val(&policy) as u32,
-        );
 
         // 3. Windows 11 DWM backdrop API (DWMWA_SYSTEMBACKDROP_TYPE = 38, DWMSBT_TRANSIENTWINDOW = 3 for Acrylic)
         let backdrop_type: u32 = 3; // DWMSBT_TRANSIENTWINDOW (Desktop Acrylic)
@@ -532,16 +518,12 @@ unsafe extern "system" fn borderless_resize_subclass(
             }
             return windows::Win32::Foundation::LRESULT(0);
         }
+        return windows::Win32::Foundation::LRESULT(0);
     }
 
     if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCACTIVATE {
-        // Passing -1 as lParam prevents DefWindowProc from painting the fallback titlebar
-        return windows::Win32::UI::Shell::DefSubclassProc(
-            hwnd,
-            msg,
-            wparam,
-            windows::Win32::Foundation::LPARAM(-1),
-        );
+        // Return 1 directly without calling DefSubclassProc to prevent DefWindowProc from painting the fallback titlebar
+        return windows::Win32::Foundation::LRESULT(1);
     }
 
     if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCPAINT {
@@ -611,7 +593,9 @@ pub fn enable_borderless_resizing(hwnd: HWND) {
             hwnd,
             windows::Win32::UI::WindowsAndMessaging::GWL_STYLE,
         );
-        let new_style = (style & !(windows::Win32::UI::WindowsAndMessaging::WS_CAPTION.0 as i32))
+        let new_style = (style
+            & !(windows::Win32::UI::WindowsAndMessaging::WS_CAPTION.0 as i32
+                | windows::Win32::UI::WindowsAndMessaging::WS_SYSMENU.0 as i32))
             | windows::Win32::UI::WindowsAndMessaging::WS_THICKFRAME.0 as i32;
         let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowLongW(
             hwnd,
@@ -638,13 +622,6 @@ pub fn enable_borderless_resizing(hwnd: HWND) {
             windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(34), // DWMWA_BORDER_COLOR
             &none as *const _ as *const _,
             std::mem::size_of_val(&none) as u32,
-        );
-        let policy = DWMNCRP_DISABLED;
-        let _ = DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_NCRENDERING_POLICY,
-            &policy as *const _ as *const _,
-            std::mem::size_of_val(&policy) as u32,
         );
 
         let _ = windows::Win32::UI::Shell::SetWindowSubclass(
