@@ -786,7 +786,7 @@ pub struct DecorationConfig {
 impl Default for DecorationConfig {
     fn default() -> Self {
         Self {
-            rounding: 6,
+            rounding: 12,
             active_opacity: 1.0,
             inactive_opacity: 0.92,
             fullscreen_opacity: 1.0,
