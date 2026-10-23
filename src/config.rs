@@ -804,6 +804,7 @@ impl Default for DecorationConfig {
 pub struct AnimationsConfig {
     pub enabled: bool,
     pub first_launch_animation: bool,
+    pub speed: f32,
 }
 
 impl Default for AnimationsConfig {
@@ -811,6 +812,7 @@ impl Default for AnimationsConfig {
         Self {
             enabled: true,
             first_launch_animation: true,
+            speed: 2.2,
         }
     }
 }
@@ -1413,6 +1415,11 @@ impl HyprConfig {
                         self.animations.first_launch_animation = b;
                     }
                 }
+                "speed" => {
+                    if let Ok(s) = v.parse::<f32>() {
+                        self.animations.speed = s.clamp(0.2, 5.0);
+                    }
+                }
                 "bezier" => self.apply_directive("bezier", v),
                 "animation" => self.apply_directive("animation", v),
                 _ => {}
@@ -1867,6 +1874,7 @@ decoration {
 animations {
     enabled = true
     first_launch_animation = true
+    speed = 2.2
 
     bezier = myBezier, 0.05, 0.9, 0.1, 1.05
     bezier = overshot, 0.13, 0.99, 0.29, 1.1
