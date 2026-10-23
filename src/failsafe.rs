@@ -18,8 +18,8 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW,
-    RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, KEY_WRITE,
-    REG_OPTION_NON_VOLATILE, REG_SZ,
+    RegSetValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_SET_VALUE,
+    KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE, REG_SZ,
 };
 use windows::Win32::System::Diagnostics::Debug::{
     SetUnhandledExceptionFilter, EXCEPTION_POINTERS,
@@ -278,8 +278,10 @@ pub fn restore_all_desktop_windows() -> usize {
 }
 
 /// Every ChickenWM executable; the daemon goes first so its watchdog stops respawning the rest.
-const CHICKENWM_PROCESSES: [&str; 10] = [
+const CHICKENWM_PROCESSES: [&str; 12] = [
     "chickenwm-rooster.exe",
+    "coop.exe",
+    "chickenscope.exe",
     "chickenwm-wm.exe",
     "chickenwm-binds.exe",
     "chickenwm-paper.exe",
@@ -745,4 +747,147 @@ pub fn install_crash_handler() {
     unsafe {
         let _ = SetUnhandledExceptionFilter(Some(crash_filter));
     }
+}
+
+const SYSTEM_POLICIES_SUBKEY: &str =
+    r"Software\Microsoft\Windows\CurrentVersion\Policies\System";
+
+fn reg_set_dword(root: HKEY, subkey: &str, name: &str, value: u32) -> Result<()> {
+    unsafe {
+        let subkey_w = to_wide_null(subkey);
+        let name_w = to_wide_null(name);
+        let mut hkey = HKEY::default();
+        let status = RegCreateKeyExW(
+            root,
+            PCWSTR(subkey_w.as_ptr()),
+            0,
+            None,
+            REG_OPTION_NON_VOLATILE,
+            KEY_WRITE,
+            None,
+            &mut hkey,
+            None,
+        );
+        if status.is_err() {
+            anyhow::bail!("RegCreateKeyExW failed for {subkey}\\{name}: {status:?}");
+        }
+        let bytes = value.to_le_bytes();
+        let set_status = RegSetValueExW(
+            hkey,
+            PCWSTR(name_w.as_ptr()),
+            0,
+            REG_DWORD,
+            Some(&bytes),
+        );
+        let _ = RegCloseKey(hkey);
+        if set_status.is_err() {
+            anyhow::bail!("RegSetValueExW failed for {subkey}\\{name}: {set_status:?}");
+        }
+        Ok(())
+    }
+}
+
+fn reg_query_dword(root: HKEY, subkey: &str, name: &str) -> Option<u32> {
+    unsafe {
+        let subkey_w = to_wide_null(subkey);
+        let name_w = to_wide_null(name);
+        let mut hkey = HKEY::default();
+        if RegOpenKeyExW(root, PCWSTR(subkey_w.as_ptr()), 0, KEY_QUERY_VALUE, &mut hkey).is_err() {
+            return None;
+        }
+        let mut bytes = [0u8; 4];
+        let mut len = 4u32;
+        let res = RegQueryValueExW(
+            hkey,
+            PCWSTR(name_w.as_ptr()),
+            None,
+            None,
+            Some(bytes.as_mut_ptr()),
+            Some(&mut len),
+        );
+        let _ = RegCloseKey(hkey);
+        if res.is_ok() && len == 4 {
+            Some(u32::from_le_bytes(bytes))
+        } else {
+            None
+        }
+    }
+}
+
+/// Phase 1.1: Configures `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\PromptOnSecureDesktop`.
+/// When `prompt_on_secure_desktop` is `false` (value `0`), `consent.exe` spawns on the `Default` desktop
+/// as a standard composite window that `coop` captures and renders seamlessly.
+pub fn set_uac_prompt_on_secure_desktop(prompt_on_secure_desktop: bool) -> Result<()> {
+    let val = if prompt_on_secure_desktop { 1 } else { 0 };
+    reg_set_dword(HKEY_LOCAL_MACHINE, SYSTEM_POLICIES_SUBKEY, "PromptOnSecureDesktop", val)
+}
+
+/// Returns `true` if `PromptOnSecureDesktop` is `0` (UAC prompts appear on `Default` desktop).
+pub fn is_uac_on_default_desktop() -> bool {
+    reg_query_dword(HKEY_LOCAL_MACHINE, SYSTEM_POLICIES_SUBKEY, "PromptOnSecureDesktop") == Some(0)
+}
+
+/// Phase 1.2: Configures `HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System\DisableLockWorkstation`.
+/// When `disable` is `true` (value `1`), `win32k.sys` does not swallow `Win + L`, allowing ChickenWM / `coop`
+/// to intercept `Win + L` and render its own custom lock screen.
+pub fn set_disable_lock_workstation(disable: bool) -> Result<()> {
+    let val = if disable { 1 } else { 0 };
+    reg_set_dword(HKEY_CURRENT_USER, SYSTEM_POLICIES_SUBKEY, "DisableLockWorkstation", val)
+}
+
+/// Returns `true` if native Windows lock screen (`Win + L`) is disabled in favor of ChickenWM's lock screen.
+pub fn is_lock_workstation_disabled() -> bool {
+    reg_query_dword(HKEY_CURRENT_USER, SYSTEM_POLICIES_SUBKEY, "DisableLockWorkstation") == Some(1)
+}
+
+/// Phase 1.4: Redundant Windows services safe to disable for latency & memory optimization.
+pub const REDUNDANT_SERVICES: [&str; 7] = [
+    "WSearch",
+    "BcastDVRUserService",
+    "WpnService",
+    "TabletInputService",
+    "DiagTrack",
+    "SysMain",
+    "DPS",
+];
+
+/// Phase 1.4: Non-negotiable system services that must NEVER be disabled (required for WGC, DXGI, Vulkan, Anti-Cheat, Audio).
+pub const NON_NEGOTIABLE_SERVICES: [&str; 6] = [
+    "dwm",
+    "CryptSvc",
+    "Winmgmt",
+    "EventLog",
+    "Audiosrv",
+    "RpcSs",
+];
+
+/// Phase 1.4: Disables (or restores to demand-start) redundant background services while strictly
+/// refusing to touch [`NON_NEGOTIABLE_SERVICES`].
+pub fn debloat_redundant_services(disable: bool) -> Result<Vec<String>> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let start_mode = if disable { "disabled" } else { "demand" };
+    let mut modified = Vec::new();
+
+    for svc in REDUNDANT_SERVICES {
+        if NON_NEGOTIABLE_SERVICES.iter().any(|n| n.eq_ignore_ascii_case(svc)) {
+            continue;
+        }
+        let cfg = Command::new("sc.exe")
+            .args(["config", svc, &format!("start={start_mode}")])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        if let Ok(out) = cfg {
+            if out.status.success() {
+                if disable {
+                    let _ = Command::new("sc.exe")
+                        .args(["stop", svc])
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .output();
+                }
+                modified.push(svc.to_string());
+            }
+        }
+    }
+    Ok(modified)
 }
