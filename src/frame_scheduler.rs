@@ -164,6 +164,22 @@ impl AdaptiveFrameScheduler {
         dt.min(max_dt) as f32
     }
 
+    /// Paces the calling thread to a fixed `hz` (e.g. 60) measured from the previous
+    /// `sample_delta_seconds` / `pace_fixed_hz` call, using the high-resolution waitable timer,
+    /// then returns the elapsed delta-time. Used for interactive mouse drag/resize updates.
+    pub fn pace_fixed_hz(&mut self, hz: f64) -> f32 {
+        let target = 1.0 / hz.max(1.0);
+        let mut now = 0i64;
+        unsafe {
+            let _ = QueryPerformanceCounter(&mut now);
+        }
+        let elapsed = ((now - self.last_qpc).max(0) as f64) / (self.qpc_freq as f64);
+        if elapsed < target {
+            self.sleep_high_precision(target - elapsed);
+        }
+        self.sample_delta_seconds()
+    }
+
     /// Paces the current thread to the next frame boundary:
     /// - If `has_active_work` is `false` and `vfr = true`, enters zero-CPU VFR sleep until woken.
     /// - If `fps_limit == 0` (Default Monitor Native Sync Mode), synchronizes with DWM vblank via
