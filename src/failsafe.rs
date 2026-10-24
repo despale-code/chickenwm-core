@@ -85,8 +85,10 @@ pub fn trigger_emergency_restore(terminate_self: bool) {
             .status();
     }
 
-    // 3. Restore Folder / Directory shell open association to default
+    // 3. Restore Folder / Directory shell open association & system policy overrides to default
     let _ = register_files_shell_handler(false, None);
+    let _ = set_disable_lock_workstation(false);
+    let _ = set_uac_prompt_on_secure_desktop(true);
 
     // 4. Terminate peer chickenwm processes first, so the daemon's explorer suppressor and
     //    watchdog can't kill the new shell or respawn modules behind our back.
@@ -352,6 +354,8 @@ pub fn find_process_ids(names: &[&str]) -> Vec<u32> {
 /// untouched), for handing the shell over to a freshly started daemon.
 pub fn terminate_modules() {
     terminate_processes(&[
+        "coop.exe",
+        "chickenscope.exe",
         "chickenwm-wm.exe",
         "chickenwm-binds.exe",
         "chickenwm-paper.exe",
