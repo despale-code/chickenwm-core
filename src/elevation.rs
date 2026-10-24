@@ -207,35 +207,66 @@ pub fn remove_admin_task() -> Result<()> {
     Ok(())
 }
 
-/// Finds the process ID of the interactive unelevated user shell (e.g. `explorer.exe`).
+/// Returns `true` if `pid` runs in the same interactive Windows session as the current process
+/// and has an unelevated (standard user / medium integrity) token.
+fn is_process_unelevated_in_current_session(pid: u32) -> bool {
+    if pid == 0 || pid == std::process::id() {
+        return false;
+    }
+    unsafe {
+        use windows::Win32::System::Threading::{
+            OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        let Ok(proc_handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return false;
+        };
+        let mut token = HANDLE::default();
+        let opened = OpenProcessToken(proc_handle, TOKEN_QUERY, &mut token);
+        let _ = CloseHandle(proc_handle);
+        if opened.is_err() {
+            return false;
+        }
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut size = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut _ as *mut _),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut size,
+        );
+        let _ = CloseHandle(token);
+        ok.is_ok() && elevation.TokenIsElevated == 0
+    }
+}
+
+/// Finds the process ID of an interactive unelevated user shell/host process in the current session
+/// (prefers `explorer.exe`, falling back to `sihost.exe` or `ctfmon.exe` when `explorer.exe` is suppressed).
+/// Never returns `chickenwm-rooster.exe` or an elevated process.
 pub fn find_shell_process_id() -> Option<u32> {
     unsafe {
-        use windows::Win32::UI::WindowsAndMessaging::{GetShellWindow, GetWindowThreadProcessId};
-
-        let hwnd = GetShellWindow();
-        if !hwnd.is_invalid() {
-            let mut pid = 0u32;
-            let _ = GetWindowThreadProcessId(hwnd, Some(&mut pid));
-            if pid != 0 {
-                return Some(pid);
-            }
-        }
-
-        // Fallback: search process snapshot for explorer.exe
         use windows::Win32::System::Diagnostics::ToolHelp::*;
         let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
         let mut entry = PROCESSENTRY32W {
             dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
             ..Default::default()
         };
+        let mut explorer_pid = None;
+        let mut fallback_pid = None;
         if Process32FirstW(snap, &mut entry).is_ok() {
             loop {
                 let name = String::from_utf16_lossy(&entry.szExeFile)
                     .trim_matches('\0')
-                    .to_lowercase();
-                if name == "explorer.exe" {
-                    let _ = CloseHandle(snap);
-                    return Some(entry.th32ProcessID);
+                    .to_ascii_lowercase();
+                let pid = entry.th32ProcessID;
+                if name == "explorer.exe" && is_process_unelevated_in_current_session(pid) {
+                    explorer_pid = Some(pid);
+                    break;
+                } else if fallback_pid.is_none()
+                    && (name == "sihost.exe" || name == "ctfmon.exe")
+                    && is_process_unelevated_in_current_session(pid)
+                {
+                    fallback_pid = Some(pid);
                 }
                 if Process32NextW(snap, &mut entry).is_err() {
                     break;
@@ -243,12 +274,13 @@ pub fn find_shell_process_id() -> Option<u32> {
             }
         }
         let _ = CloseHandle(snap);
-        None
+        explorer_pid.or(fallback_pid)
     }
 }
 
-/// Spawns a process as a child of `parent_pid` (typically `explorer.exe`), forcing it to inherit
-/// the parent process's unelevated (standard user / medium integrity) security token.
+/// Spawns a process as a child of `parent_pid` (typically `explorer.exe` or `sihost.exe`), forcing it
+/// to inherit the parent process's unelevated (standard user / medium integrity) security token
+/// and a clean console state (`CREATE_NEW_CONSOLE` so GUI/CUI apps never fail with `0xC0000142`).
 fn spawn_as_child_of_process(parent_pid: u32, target: &Path, args: Option<&str>) -> Result<()> {
     unsafe {
         use windows::Win32::System::Threading::*;
@@ -294,11 +326,23 @@ fn spawn_as_child_of_process(parent_pid: u32, target: &Path, args: Option<&str>)
             ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
         });
 
+        // CRITICAL: Include `CREATE_NEW_CONSOLE` when reparenting `.exe`/`.cmd`/`.bat` with
+        // `PROC_THREAD_ATTRIBUTE_PARENT_PROCESS`. Without `CREATE_NEW_CONSOLE`, Windows copies the
+        // caller's `ConsoleHandle` into the child's `ProcessParameters`, which does not belong to
+        // `parent_pid` (or is stale), causing `kernelbase.dll` in the child to abort with
+        // `0xC0000142` (`STATUS_DLL_INIT_FAILED`). For GUI subsystem executables, `CREATE_NEW_CONSOLE`
+        // simply clears `ConsoleHandle` without creating a console window.
         let target_str = target.to_string_lossy();
         let (cmd_str, creation_flags) = if is_exe && args.is_none() {
-            (format!("\"{}\"", target_str), EXTENDED_STARTUPINFO_PRESENT)
+            (
+                format!("\"{}\"", target_str),
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_NEW_CONSOLE,
+            )
         } else if is_exe && args.is_some() {
-            (format!("\"{}\" {}", target_str, args.unwrap()), EXTENDED_STARTUPINFO_PRESENT)
+            (
+                format!("\"{}\" {}", target_str, args.unwrap()),
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_NEW_CONSOLE,
+            )
         } else {
             (
                 format!("cmd.exe /c start \"\" \"{}\" {}", target_str, args.unwrap_or("")),
@@ -335,10 +379,40 @@ fn spawn_as_child_of_process(parent_pid: u32, target: &Path, args: Option<&str>)
     }
 }
 
+/// Spawns an `.exe` directly with `CREATE_NEW_CONSOLE` and clean null stdio handles so it never
+/// inherits a broken console handle (`0xC0000142`).
+fn spawn_clean_executable(target: &Path, args: Option<&str>, work_dir: Option<&Path>) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
+    use windows::Win32::System::Threading::CREATE_NEW_CONSOLE;
+
+    let is_exe = target
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"));
+    if !is_exe {
+        bail!("not an executable");
+    }
+    let mut cmd = std::process::Command::new(target);
+    if let Some(a) = args.map(str::trim).filter(|s| !s.is_empty()) {
+        for part in a.split_whitespace() {
+            cmd.arg(part);
+        }
+    }
+    if let Some(d) = work_dir.or_else(|| target.parent().filter(|p| p.is_dir())) {
+        cmd.current_dir(d);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NEW_CONSOLE.0);
+    cmd.spawn()?;
+    Ok(())
+}
+
 /// Opens an app, document, folder, shortcut, or URI.
 /// If `verb == Some("runas")`, launches elevated via UAC prompt.
 /// If `verb != Some("runas")` and the current process is running elevated as Administrator,
-/// this automatically de-elevates by spawning the child under Explorer's unelevated token,
+/// this automatically de-elevates by spawning the child under an unelevated session process token,
 /// ensuring the user's applications never unexpectedly inherit Administrator privileges!
 pub fn shell_open_unelevated(target: &Path, args: Option<&str>, verb: Option<&str>) {
     use windows::Win32::UI::Shell::ShellExecuteW;
@@ -352,6 +426,9 @@ pub fn shell_open_unelevated(target: &Path, args: Option<&str>, verb: Option<&st
     }
 
     if !is_elevated() {
+        if spawn_clean_executable(target, args, None).is_ok() {
+            return;
+        }
         let file = wide(&target.to_string_lossy());
         let params = args.map(wide);
         let verb_w = wide("open");
@@ -369,14 +446,17 @@ pub fn shell_open_unelevated(target: &Path, args: Option<&str>, verb: Option<&st
         return;
     }
 
-    // Process is elevated. De-elevate through explorer.exe if available.
-    if let Some(explorer_pid) = find_shell_process_id() {
-        if spawn_as_child_of_process(explorer_pid, target, args).is_ok() {
+    // Process is elevated. De-elevate through an unelevated shell/session process if available.
+    if let Some(shell_pid) = find_shell_process_id() {
+        if spawn_as_child_of_process(shell_pid, target, args).is_ok() {
             return;
         }
     }
 
-    // Backstop fallback if Explorer is missing
+    // Backstop fallback if no unelevated parent could be opened
+    if spawn_clean_executable(target, args, None).is_ok() {
+        return;
+    }
     let file = wide(&target.to_string_lossy());
     let params = args.map(wide);
     let verb_w = wide("open");
@@ -395,11 +475,19 @@ pub fn shell_open_unelevated(target: &Path, args: Option<&str>, verb: Option<&st
 
 /// Spawns a command string as a standard user process when running elevated.
 pub fn spawn_unelevated(cmd_line: &str, work_dir: Option<&Path>) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
+    use windows::Win32::System::Threading::CREATE_NEW_CONSOLE;
+
     if !is_elevated() {
         let mut parts = cmd_line.split_whitespace();
         if let Some(prog) = parts.next() {
             let mut cmd = std::process::Command::new(prog);
-            cmd.args(parts);
+            cmd.args(parts)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(CREATE_NEW_CONSOLE.0);
             if let Some(d) = work_dir {
                 cmd.current_dir(d);
             }
@@ -409,11 +497,11 @@ pub fn spawn_unelevated(cmd_line: &str, work_dir: Option<&Path>) -> Result<()> {
         bail!("empty command");
     }
 
-    if let Some(explorer_pid) = find_shell_process_id() {
+    if let Some(shell_pid) = find_shell_process_id() {
         let prog = cmd_line.split_whitespace().next().unwrap_or(cmd_line);
         let path = Path::new(prog);
         let args = cmd_line.strip_prefix(prog).map(|s| s.trim()).filter(|s| !s.is_empty());
-        if spawn_as_child_of_process(explorer_pid, path, args).is_ok() {
+        if spawn_as_child_of_process(shell_pid, path, args).is_ok() {
             return Ok(());
         }
     }
@@ -421,7 +509,11 @@ pub fn spawn_unelevated(cmd_line: &str, work_dir: Option<&Path>) -> Result<()> {
     let mut parts = cmd_line.split_whitespace();
     if let Some(prog) = parts.next() {
         let mut cmd = std::process::Command::new(prog);
-        cmd.args(parts);
+        cmd.args(parts)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NEW_CONSOLE.0);
         if let Some(d) = work_dir {
             cmd.current_dir(d);
         }

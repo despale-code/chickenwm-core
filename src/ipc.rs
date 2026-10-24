@@ -14,6 +14,7 @@ pub const PIPE_NAME_LAUNCHER: &str = r"\\.\pipe\chickenwm-launcher-ipc";
 pub const PIPE_NAME_PAPER: &str = r"\\.\pipe\chickenwm-paper-ipc";
 pub const PIPE_NAME_BAR: &str = r"\\.\pipe\chickenwm-bar-ipc";
 pub const PIPE_NAME_NOTIFY: &str = r"\\.\pipe\chickenwm-notify-ipc";
+pub const PIPE_NAME_DOWNLOADER: &str = r"\\.\pipe\chickenwm-downloader-ipc";
 
 /// Direction for focus / swap / move operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -298,6 +299,14 @@ pub enum IpcCommand {
     QueryNotificationStatus,
     /// The system tray icons rooster hosts (`Shell_TrayWnd`), for the bar.
     QueryTray,
+    /// Redirect a download or torrent/magnet request to `chickenwm-downloader` (`\\.\pipe\chickenwm-downloader-ipc`).
+    AddDownload {
+        url: String,
+        filename: Option<String>,
+        save_dir: Option<String>,
+        is_torrent: bool,
+        prompt_location: bool,
+    },
 }
 
 /// A desktop notification shown by `chickenwm-notify`.

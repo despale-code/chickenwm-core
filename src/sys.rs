@@ -523,6 +523,16 @@ unsafe extern "system" fn borderless_resize_subclass(
         return windows::Win32::Foundation::LRESULT(0);
     }
 
+    if msg == windows::Win32::UI::WindowsAndMessaging::WM_GETMINMAXINFO {
+        let mmi = lparam.0 as *mut windows::Win32::UI::WindowsAndMessaging::MINMAXINFO;
+        if !mmi.is_null() {
+            let res = windows::Win32::UI::Shell::DefSubclassProc(hwnd, msg, wparam, lparam);
+            (*mmi).ptMinTrackSize.x = (*mmi).ptMinTrackSize.x.max(360);
+            (*mmi).ptMinTrackSize.y = (*mmi).ptMinTrackSize.y.max(260);
+            return res;
+        }
+    }
+
     if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCHITTEST {
         let x = (lparam.0 as i32) as i16 as i32;
         let y = ((lparam.0 as i32) >> 16) as i16 as i32;
