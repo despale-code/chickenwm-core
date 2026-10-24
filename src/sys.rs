@@ -427,20 +427,8 @@ pub fn apply_acrylic(hwnd: HWND, tint_abgr: Option<u32>) -> bool {
             std::mem::size_of::<windows::Win32::Foundation::BOOL>() as u32,
         );
 
-        // Strip DWM native fallback titlebar/caption and border
+        // Strip DWM native 1px border (DWMWA_COLOR_NONE = 0xFFFFFFFE is only valid for DWMWA_BORDER_COLOR)
         let none: u32 = 0xFFFF_FFFE; // DWMWA_COLOR_NONE
-        let _ = DwmSetWindowAttribute(
-            hwnd,
-            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(35), // DWMWA_CAPTION_COLOR
-            &none as *const _ as *const _,
-            std::mem::size_of_val(&none) as u32,
-        );
-        let _ = DwmSetWindowAttribute(
-            hwnd,
-            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(36), // DWMWA_TEXT_COLOR
-            &none as *const _ as *const _,
-            std::mem::size_of_val(&none) as u32,
-        );
         let _ = DwmSetWindowAttribute(
             hwnd,
             windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(34), // DWMWA_BORDER_COLOR
@@ -603,20 +591,8 @@ pub fn enable_borderless_resizing(hwnd: HWND) {
             new_style,
         );
 
-        // Strip DWM native caption color, text color, border color, and non-client rendering
+        // Strip DWM native 1px border (DWMWA_COLOR_NONE = 0xFFFFFFFE is only valid for DWMWA_BORDER_COLOR)
         let none: u32 = 0xFFFF_FFFE; // DWMWA_COLOR_NONE
-        let _ = DwmSetWindowAttribute(
-            hwnd,
-            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(35), // DWMWA_CAPTION_COLOR
-            &none as *const _ as *const _,
-            std::mem::size_of_val(&none) as u32,
-        );
-        let _ = DwmSetWindowAttribute(
-            hwnd,
-            windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(36), // DWMWA_TEXT_COLOR
-            &none as *const _ as *const _,
-            std::mem::size_of_val(&none) as u32,
-        );
         let _ = DwmSetWindowAttribute(
             hwnd,
             windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(34), // DWMWA_BORDER_COLOR
