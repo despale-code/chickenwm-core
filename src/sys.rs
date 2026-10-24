@@ -407,6 +407,7 @@ pub fn apply_acrylic_raw(hwnd: *mut std::ffi::c_void, tint_abgr: Option<u32>) ->
 }
 
 pub fn apply_acrylic(hwnd: HWND, tint_abgr: Option<u32>) -> bool {
+    suppress_nc_paint(hwnd);
     unsafe {
         // 1. Extend the DWM frame into the client area across the entire window bounds (-1 margins).
         // This tells DWM to render the backdrop material behind the entire client area.
@@ -514,7 +515,10 @@ unsafe extern "system" fn borderless_resize_subclass(
         return windows::Win32::Foundation::LRESULT(1);
     }
 
-    if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCPAINT {
+    if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCPAINT
+        || msg == 0x00AE // WM_NCUAHDRAWCAPTION
+        || msg == 0x00AF // WM_NCUAHDRAWFRAME
+    {
         // Suppress native non-client painting completely
         return windows::Win32::Foundation::LRESULT(0);
     }
@@ -571,6 +575,52 @@ unsafe extern "system" fn borderless_resize_subclass(
     windows::Win32::UI::Shell::DefSubclassProc(hwnd, msg, wparam, lparam) }
 }
 
+unsafe extern "system" fn frameless_nc_subclass(
+    hwnd: HWND,
+    msg: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+    _id: usize,
+    _ref_data: usize,
+) -> windows::Win32::Foundation::LRESULT {
+    unsafe {
+        if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCCALCSIZE {
+            return windows::Win32::Foundation::LRESULT(0);
+        }
+        if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCACTIVATE {
+            return windows::Win32::Foundation::LRESULT(1);
+        }
+        if msg == windows::Win32::UI::WindowsAndMessaging::WM_NCPAINT
+            || msg == 0x00AE // WM_NCUAHDRAWCAPTION
+            || msg == 0x00AF // WM_NCUAHDRAWFRAME
+        {
+            return windows::Win32::Foundation::LRESULT(0);
+        }
+        windows::Win32::UI::Shell::DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
+}
+
+/// Installs a lightweight Win32 window subclass that intercepts `WM_NCCALCSIZE`, `WM_NCACTIVATE`,
+/// `WM_NCPAINT`, `WM_NCUAHDRAWCAPTION` (`0x00AE`), and `WM_NCUAHDRAWFRAME` (`0x00AF`) before `winit`
+/// or `DefWindowProcW` can synchronously paint a 1-frame classic Windows 95 titlebar on click/focus.
+pub fn suppress_nc_paint(hwnd: HWND) {
+    if hwnd.0.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = windows::Win32::UI::Shell::SetWindowSubclass(
+            hwnd,
+            Some(frameless_nc_subclass),
+            9998,
+            0,
+        );
+    }
+}
+
+pub fn suppress_nc_paint_raw(hwnd: *mut std::ffi::c_void) {
+    suppress_nc_paint(HWND(hwnd));
+}
+
 pub fn enable_borderless_resizing_raw(hwnd: *mut std::ffi::c_void) {
     enable_borderless_resizing(HWND(hwnd));
 }
@@ -581,10 +631,11 @@ pub fn enable_borderless_resizing(hwnd: HWND) {
             hwnd,
             windows::Win32::UI::WindowsAndMessaging::GWL_STYLE,
         );
-        let new_style = (style
-            & !(windows::Win32::UI::WindowsAndMessaging::WS_CAPTION.0 as i32
-                | windows::Win32::UI::WindowsAndMessaging::WS_SYSMENU.0 as i32))
-            | windows::Win32::UI::WindowsAndMessaging::WS_THICKFRAME.0 as i32;
+        // Keep WS_CAPTION | WS_THICKFRAME so DWM composition stays active and user32 never falls back to Win95 NC painting;
+        // borderless_resize_subclass intercepts WM_NCCALCSIZE, WM_NCACTIVATE, WM_NCPAINT, 0x00AE, and 0x00AF.
+        let new_style = (style & !(windows::Win32::UI::WindowsAndMessaging::WS_SYSMENU.0 as i32))
+            | (windows::Win32::UI::WindowsAndMessaging::WS_CAPTION.0 as i32
+                | windows::Win32::UI::WindowsAndMessaging::WS_THICKFRAME.0 as i32);
         let _ = windows::Win32::UI::WindowsAndMessaging::SetWindowLongW(
             hwnd,
             windows::Win32::UI::WindowsAndMessaging::GWL_STYLE,
