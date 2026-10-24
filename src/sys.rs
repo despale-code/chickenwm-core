@@ -437,7 +437,18 @@ pub fn apply_acrylic(hwnd: HWND, tint_abgr: Option<u32>) -> bool {
             std::mem::size_of_val(&none) as u32,
         );
 
-        // 3. Windows 11 DWM backdrop API (DWMWA_SYSTEMBACKDROP_TYPE = 38, DWMSBT_TRANSIENTWINDOW = 3 for Acrylic)
+        // 3. Apply WCA_ACCENT_POLICY AccentEnableAcrylicblurbehind with icy frost tint first
+        // so popup/borderless windows (roobar popovers, notifications) always receive DWM blur
+        let tint = tint_abgr.unwrap_or(0x99241A12); // cool icy dark frost tint in ABGR
+        let policy = ACCENT_POLICY {
+            accent_state: ACCENT_STATE::AccentEnableAcrylicblurbehind,
+            accent_flags: 0, // 0 = no native 1px white accent border
+            gradient_color: tint,
+            animation_id: 0,
+        };
+        let wca_ok = set_window_accent_policy(hwnd, &policy);
+
+        // 4. Windows 11 DWM backdrop API (DWMWA_SYSTEMBACKDROP_TYPE = 38, DWMSBT_TRANSIENTWINDOW = 3 for Acrylic)
         let backdrop_type: u32 = 3; // DWMSBT_TRANSIENTWINDOW (Desktop Acrylic)
         let hr = DwmSetWindowAttribute(
             hwnd,
@@ -445,20 +456,7 @@ pub fn apply_acrylic(hwnd: HWND, tint_abgr: Option<u32>) -> bool {
             &backdrop_type as *const _ as *const _,
             std::mem::size_of::<u32>() as u32,
         );
-        if hr.is_ok() {
-            return true;
-        }
-
-        // 4. Fallback for Windows 10: SetWindowCompositionAttribute with WCA_ACCENT_POLICY AccentEnableAcrylicblurbehind
-        let tint = tint_abgr.unwrap_or(0x01000000); // minimal alpha tint to activate DWM composition
-        let policy = ACCENT_POLICY {
-            accent_state: ACCENT_STATE::AccentEnableAcrylicblurbehind,
-            accent_flags: 2, // draw all borders
-            gradient_color: tint,
-            animation_id: 0,
-        };
-        let wca_ok = set_window_accent_policy(hwnd, &policy);
-        if wca_ok {
+        if wca_ok || hr.is_ok() {
             return true;
         }
 
@@ -471,6 +469,85 @@ pub fn apply_acrylic(hwnd: HWND, tint_abgr: Option<u32>) -> bool {
         };
         DwmEnableBlurBehindWindow(hwnd, &bb).is_ok()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Shared Vulkan Display State (Brightness / Dimming via `coop`)
+// ---------------------------------------------------------------------------
+
+const VULKAN_DISPLAY_SHM_NAME: &str = "Local\\ChickenWM_VulkanDisplayState";
+const VULKAN_DISPLAY_MAGIC: u32 = 0x4357_564B; // "CWVK"
+
+#[repr(C)]
+struct VulkanDisplaySharedState {
+    magic: std::sync::atomic::AtomicU32,
+    /// Brightness in permille (`150..=1000`, where `1000` = 100.0%).
+    brightness_permille: std::sync::atomic::AtomicU32,
+}
+
+fn vulkan_display_shm() -> Option<&'static VulkanDisplaySharedState> {
+    static SHM: OnceLock<Option<usize>> = OnceLock::new();
+    let ptr = (*SHM.get_or_init(|| unsafe {
+        use windows::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows::Win32::System::Memory::{
+            CreateFileMappingW, MapViewOfFile, FILE_MAP_ALL_ACCESS, PAGE_READWRITE,
+        };
+        let wide = to_wide_null(VULKAN_DISPLAY_SHM_NAME);
+        let h_map = CreateFileMappingW(
+            INVALID_HANDLE_VALUE,
+            None,
+            PAGE_READWRITE,
+            0,
+            64,
+            PCWSTR(wide.as_ptr()),
+        )
+        .ok()?;
+        if h_map.is_invalid() {
+            return None;
+        }
+        let view = MapViewOfFile(h_map, FILE_MAP_ALL_ACCESS, 0, 0, 64);
+        if view.Value.is_null() {
+            return None;
+        }
+        let state = &*(view.Value as *const VulkanDisplaySharedState);
+        if state.magic.load(std::sync::atomic::Ordering::Acquire) != VULKAN_DISPLAY_MAGIC {
+            state
+                .brightness_permille
+                .store(1000, std::sync::atomic::Ordering::Release);
+            state
+                .magic
+                .store(VULKAN_DISPLAY_MAGIC, std::sync::atomic::Ordering::Release);
+        }
+        Some(view.Value as usize)
+    }))?;
+    Some(unsafe { &*(ptr as *const VulkanDisplaySharedState) })
+}
+
+/// Sets the Vulkan compositor display brightness percentage (`15.0..=100.0`).
+pub fn set_vulkan_display_brightness_pct(pct: f32) {
+    let clamped = (pct.clamp(15.0, 100.0) * 10.0).round() as u32;
+    if let Some(shm) = vulkan_display_shm() {
+        shm.brightness_permille
+            .store(clamped, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Gets the Vulkan compositor display brightness percentage (`15.0..=100.0`, default `100.0`).
+pub fn get_vulkan_display_brightness_pct() -> f32 {
+    if let Some(shm) = vulkan_display_shm() {
+        let pm = shm
+            .brightness_permille
+            .load(std::sync::atomic::Ordering::Acquire)
+            .clamp(150, 1000);
+        pm as f32 / 10.0
+    } else {
+        100.0
+    }
+}
+
+/// Gets the normalized Vulkan compositor display brightness (`0.15..=1.0`, default `1.0`).
+pub fn get_vulkan_display_brightness_norm() -> f32 {
+    get_vulkan_display_brightness_pct() / 100.0
 }
 
 
