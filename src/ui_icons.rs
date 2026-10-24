@@ -683,5 +683,67 @@ pub fn paint_file(painter: &egui::Painter, rect: Rect, color: Color32) {
     painter.line_segment([Pos2::new(r.right() - fold, r.top() + fold), Pos2::new(r.right(), r.top() + fold)], stroke);
 }
 
+pub fn paint_chevron_down(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.4_f32, color);
+    let span = 3.5_f32;
+    let y = c.y - 1.0_f32;
+    painter.line_segment([Pos2::new(c.x - span, y), Pos2::new(c.x, y + span)], stroke);
+    painter.line_segment([Pos2::new(c.x, y + span), Pos2::new(c.x + span, y)], stroke);
+}
+
+pub fn paint_minimize(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.3_f32, color);
+    painter.line_segment([Pos2::new(c.x - 4.5_f32, c.y), Pos2::new(c.x + 4.5_f32, c.y)], stroke);
+}
+
+pub fn paint_maximize(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.2_f32, color);
+    let r = Rect::from_center_size(c, egui::vec2(9.0_f32, 9.0_f32));
+    painter.rect_stroke(r, CornerRadius::same(1), stroke, egui::StrokeKind::Inside);
+}
+
+pub fn paint_link(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.3_f32, color);
+    let r = Rect::from_center_size(Pos2::new(c.x - 2.5_f32, c.y - 2.5_f32), egui::vec2(7.0_f32, 5.0_f32));
+    painter.rect_stroke(r, CornerRadius::same(2), stroke, egui::StrokeKind::Inside);
+    let r2 = Rect::from_center_size(Pos2::new(c.x + 2.5_f32, c.y + 2.5_f32), egui::vec2(7.0_f32, 5.0_f32));
+    painter.rect_stroke(r2, CornerRadius::same(2), stroke, egui::StrokeKind::Inside);
+    painter.line_segment([Pos2::new(c.x - 1.5_f32, c.y), Pos2::new(c.x + 1.5_f32, c.y)], stroke);
+}
+
+pub fn paint_arrow_down(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.3_f32, color);
+    painter.line_segment([Pos2::new(c.x, c.y - 4.5_f32), Pos2::new(c.x, c.y + 4.5_f32)], stroke);
+    painter.line_segment([Pos2::new(c.x - 3.0_f32, c.y + 1.5_f32), Pos2::new(c.x, c.y + 4.5_f32)], stroke);
+    painter.line_segment([Pos2::new(c.x + 3.0_f32, c.y + 1.5_f32), Pos2::new(c.x, c.y + 4.5_f32)], stroke);
+}
+
+pub fn paint_arrow_up(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.3_f32, color);
+    painter.line_segment([Pos2::new(c.x, c.y + 4.5_f32), Pos2::new(c.x, c.y - 4.5_f32)], stroke);
+    painter.line_segment([Pos2::new(c.x - 3.0_f32, c.y - 1.5_f32), Pos2::new(c.x, c.y - 4.5_f32)], stroke);
+    painter.line_segment([Pos2::new(c.x + 3.0_f32, c.y - 1.5_f32), Pos2::new(c.x, c.y - 4.5_f32)], stroke);
+}
+
+pub fn paint_peer_swarm(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.1_f32, color);
+    let r = 2.0_f32;
+    let p_left = Pos2::new(c.x - 4.5_f32, c.y);
+    let p_top_r = Pos2::new(c.x + 3.5_f32, c.y - 4.0_f32);
+    let p_bot_r = Pos2::new(c.x + 3.5_f32, c.y + 4.0_f32);
+    painter.circle_stroke(p_left, r, stroke);
+    painter.circle_stroke(p_top_r, r, stroke);
+    painter.circle_stroke(p_bot_r, r, stroke);
+    painter.line_segment([p_left, p_top_r], stroke);
+    painter.line_segment([p_left, p_bot_r], stroke);
+}
+
 
 

@@ -298,6 +298,8 @@ pub enum IpcCommand {
     DismissNotifications,
     /// Show / hide the notification center (history of past notifications).
     ToggleNotificationCenter,
+    /// Explicitly close the notification center if open.
+    CloseNotificationCenter,
     /// Unread notifications and do-not-disturb (`chickenwm-notify`), for the bar's bell.
     QueryNotificationStatus,
     /// The system tray icons rooster hosts (`Shell_TrayWnd`), for the bar.
