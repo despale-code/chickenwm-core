@@ -208,6 +208,8 @@ pub struct WorkspaceSummary {
     pub occupied: bool,
     pub client_count: usize,
     pub focused_title: Option<String>,
+    #[serde(default)]
+    pub client_hwnds: Vec<u64>,
 }
 
 /// Real-time snapshot pushed from `chickenwm-wm` to `roobar` (`\\.\pipe\chickenwm-bar-ipc`)
@@ -235,6 +237,7 @@ impl Default for BarStateSnapshot {
                     occupied: false,
                     client_count: 0,
                     focused_title: None,
+                    client_hwnds: Vec::new(),
                 })
                 .collect(),
             active_window_title: String::new(),
