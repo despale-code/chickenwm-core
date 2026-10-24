@@ -280,7 +280,7 @@ pub fn restore_all_desktop_windows() -> usize {
 }
 
 /// Every ChickenWM executable; the daemon goes first so its watchdog stops respawning the rest.
-const CHICKENWM_PROCESSES: [&str; 12] = [
+const CHICKENWM_PROCESSES: [&str; 13] = [
     "chickenwm-rooster.exe",
     "coop.exe",
     "chickenscope.exe",
@@ -292,6 +292,7 @@ const CHICKENWM_PROCESSES: [&str; 12] = [
     "chickenwm-files.exe",
     "chickenwm-settings.exe",
     "chickenwm-notify.exe",
+    "chickenwm-downloader.exe",
     "chickenwm-shot.exe",
 ];
 
@@ -362,6 +363,7 @@ pub fn terminate_modules() {
         "roobar.exe",
         "chickenwm-launcher.exe",
         "chickenwm-notify.exe",
+        "chickenwm-downloader.exe",
     ]);
 }
 

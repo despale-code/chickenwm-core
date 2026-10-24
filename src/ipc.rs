@@ -103,6 +103,8 @@ pub enum Action {
     OpenSettings,
     /// Show / hide the notification center (`chickenwm-notify`).
     ToggleNotificationCenter,
+    /// Show / hide the download manager panel (`chickenwm-downloader`).
+    ToggleDownloaderCenter,
     /// Enter or exit a modal keybind layer (`submap, resize` / `submap, reset`).
     Submap(String),
     /// Toggle the keybind cheat-sheet overlay (`cheatsheet` / `showbinds`).
@@ -193,6 +195,7 @@ impl Action {
             })),
             "settings" | "opensettings" => Some(Action::OpenSettings),
             "notifications" | "notificationcenter" => Some(Action::ToggleNotificationCenter),
+            "downloads" | "downloader" | "downloadcenter" => Some(Action::ToggleDownloaderCenter),
             "submap" => Some(Action::Submap(arg.to_string())),
             "cheatsheet" | "showbinds" | "binds" => Some(Action::ShowBindsCheatSheet),
             "exit" => Some(Action::Exit),
@@ -306,7 +309,17 @@ pub enum IpcCommand {
         save_dir: Option<String>,
         is_torrent: bool,
         prompt_location: bool,
+        #[serde(default)]
+        cookies: Option<String>,
+        #[serde(default)]
+        referer: Option<String>,
+        #[serde(default)]
+        user_agent: Option<String>,
     },
+    /// Show / hide the download manager panel (`chickenwm-downloader`).
+    ToggleDownloaderCenter,
+    /// Active / total download status (`chickenwm-downloader`), for the bar's downloads widget.
+    QueryDownloaderStatus,
 }
 
 /// A desktop notification shown by `chickenwm-notify`.
@@ -383,6 +396,12 @@ pub enum IpcResponse {
     Status(DaemonStatus),
     BarState(BarStateSnapshot),
     NotificationStatus { unread: u32, dnd: bool },
+    DownloaderStatus {
+        active_count: u32,
+        total_count: u32,
+        speed_bps: u64,
+        progress_pct: u8,
+    },
     Tray(Vec<TrayIcon>),
 }
 

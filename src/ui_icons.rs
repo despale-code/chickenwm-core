@@ -359,6 +359,23 @@ pub fn paint_bell(painter: &egui::Painter, rect: Rect, color: Color32, dnd: bool
     }
 }
 
+pub fn paint_download(painter: &egui::Painter, rect: Rect, color: Color32, active: bool) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.4_f32, color);
+    // Vertical shaft
+    painter.line_segment([c + egui::vec2(0.0, -5.2), c + egui::vec2(0.0, 1.8)], stroke);
+    // Arrowhead
+    painter.line_segment([c + egui::vec2(-3.2, -1.2), c + egui::vec2(0.0, 2.0)], stroke);
+    painter.line_segment([c + egui::vec2(3.2, -1.2), c + egui::vec2(0.0, 2.0)], stroke);
+    // Bottom tray bracket
+    painter.line_segment([c + egui::vec2(-5.0, 2.2), c + egui::vec2(-5.0, 4.6)], stroke);
+    painter.line_segment([c + egui::vec2(-5.0, 4.6), c + egui::vec2(5.0, 4.6)], stroke);
+    painter.line_segment([c + egui::vec2(5.0, 4.6), c + egui::vec2(5.0, 2.2)], stroke);
+    if active {
+        painter.circle_filled(c + egui::vec2(4.5, -4.2), 1.6, color);
+    }
+}
+
 pub fn paint_search(painter: &egui::Painter, rect: Rect, color: Color32) {
     let c = rect.center() + egui::vec2(-1.0, -1.0);
     let stroke = Stroke::new(1.5_f32, color);
