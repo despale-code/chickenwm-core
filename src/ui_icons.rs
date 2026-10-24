@@ -462,3 +462,226 @@ pub fn paint_git_branch(painter: &egui::Painter, rect: Rect, color: Color32) {
     painter.circle_filled(p_branch, node_r, color);
 }
 
+/// macOS Control Center switch capsules icon (two stacked pill sliders with offset knobs).
+pub fn paint_control_center(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.2_f32, color);
+    let pill_w = 14.0_f32;
+    let pill_h = 5.2_f32;
+    let r = CornerRadius::same(2);
+
+    // Top slider (knob to the right)
+    let top_rect = Rect::from_center_size(Pos2::new(c.x, c.y - 3.4), egui::vec2(pill_w, pill_h));
+    painter.rect_stroke(top_rect, r, stroke, egui::StrokeKind::Inside);
+    painter.circle_filled(Pos2::new(top_rect.right() - 3.2, top_rect.center().y), 1.6, color);
+
+    // Bottom slider (knob to the left)
+    let bot_rect = Rect::from_center_size(Pos2::new(c.x, c.y + 3.4), egui::vec2(pill_w, pill_h));
+    painter.rect_stroke(bot_rect, r, stroke, egui::StrokeKind::Inside);
+    painter.circle_filled(Pos2::new(bot_rect.left() + 3.2, bot_rect.center().y), 1.6, color);
+}
+
+/// Crescent moon icon for Do Not Disturb / Night mode.
+pub fn paint_moon(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let r = 5.5_f32;
+    // Outer arc and inner concave curve
+    let mut pts = Vec::new();
+    let steps = 16;
+    for i in 0..=steps {
+        let a = -std::f32::consts::FRAC_PI_2 + (std::f32::consts::PI * 1.25) * (i as f32 / steps as f32);
+        pts.push(Pos2::new(c.x + a.cos() * r, c.y + a.sin() * r));
+    }
+    for i in (0..=steps).rev() {
+        let a = -std::f32::consts::FRAC_PI_2 + (std::f32::consts::PI * 1.25) * (i as f32 / steps as f32);
+        pts.push(Pos2::new(c.x + 2.4 + a.cos() * (r * 0.75), c.y + a.sin() * (r * 0.75)));
+    }
+    painter.add(egui::Shape::convex_polygon(pts, color, Stroke::NONE));
+}
+
+/// Sun / display brightness icon.
+pub fn paint_sun(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.3_f32, color);
+    let r = 3.2_f32;
+    painter.circle_stroke(c, r, stroke);
+    for i in 0..8 {
+        let angle = i as f32 * (std::f32::consts::TAU / 8.0);
+        let p1 = c + egui::vec2(angle.cos() * (r + 1.2), angle.sin() * (r + 1.2));
+        let p2 = c + egui::vec2(angle.cos() * (r + 3.2), angle.sin() * (r + 3.2));
+        painter.line_segment([p1, p2], stroke);
+    }
+}
+
+/// Screen mirroring overlapping display monitors icon.
+pub fn paint_screen_mirror(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.3_f32, color);
+    let r = CornerRadius::same(2);
+    // Back display
+    let back = Rect::from_center_size(Pos2::new(c.x + 2.0, c.y - 2.0), egui::vec2(10.0, 7.5));
+    painter.rect_stroke(back, r, stroke, egui::StrokeKind::Inside);
+    // Front display
+    let front = Rect::from_center_size(Pos2::new(c.x - 2.0, c.y + 2.0), egui::vec2(10.0, 7.5));
+    painter.rect_filled(front, r, Color32::from_black_alpha(160));
+    painter.rect_stroke(front, r, stroke, egui::StrokeKind::Inside);
+}
+
+/// AirDrop / wireless broadcast concentric wave rings.
+pub fn paint_airdrop(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center() + egui::vec2(0.0, 1.0);
+    let stroke = Stroke::new(1.2_f32, color);
+    painter.circle_filled(c, 1.4, color);
+    for r in [3.4_f32, 5.6] {
+        let start = -std::f32::consts::FRAC_PI_2 - 1.1;
+        let sweep = 2.2_f32;
+        let steps = 12;
+        let arc: Vec<Pos2> = (0..=steps)
+            .map(|i| {
+                let a = start + sweep * (i as f32 / steps as f32);
+                c + egui::vec2(a.cos() * r, a.sin() * r)
+            })
+            .collect();
+        painter.add(egui::Shape::line(arc, stroke));
+    }
+}
+
+/// Music note icon.
+pub fn paint_music(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.4_f32, color);
+    let n1 = Pos2::new(c.x - 3.5, c.y + 3.0);
+    let n2 = Pos2::new(c.x + 3.5, c.y + 1.5);
+    painter.circle_filled(n1, 2.0, color);
+    painter.circle_filled(n2, 2.0, color);
+    let top1 = Pos2::new(n1.x + 1.2, c.y - 4.5);
+    let top2 = Pos2::new(n2.x + 1.2, c.y - 6.0);
+    painter.line_segment([Pos2::new(n1.x + 1.2, n1.y), top1], stroke);
+    painter.line_segment([Pos2::new(n2.x + 1.2, n2.y), top2], stroke);
+    painter.line_segment([top1, top2], Stroke::new(2.2_f32, color));
+}
+
+/// Skip next track media playback button.
+pub fn paint_next(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let h = 5.0_f32;
+    let t = vec![
+        Pos2::new(c.x - 3.5, c.y - h),
+        Pos2::new(c.x + 1.5, c.y),
+        Pos2::new(c.x - 3.5, c.y + h),
+    ];
+    painter.add(egui::Shape::convex_polygon(t, color, Stroke::NONE));
+    painter.line_segment([Pos2::new(c.x + 3.0, c.y - h), Pos2::new(c.x + 3.0, c.y + h)], Stroke::new(1.6_f32, color));
+}
+
+/// Horseshoe magnet icon for Torrents.
+pub fn paint_magnet(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center() + egui::vec2(0.0, -1.0);
+    let stroke = Stroke::new(1.6_f32, color);
+    let r = 4.5_f32;
+    let p_left = Pos2::new(c.x - r, c.y - 2.5);
+    let p_right = Pos2::new(c.x + r, c.y - 2.5);
+    let arc_l = Pos2::new(c.x - r, c.y + 1.0);
+    let arc_r = Pos2::new(c.x + r, c.y + 1.0);
+
+    painter.line_segment([p_left, arc_l], stroke);
+    painter.line_segment([p_right, arc_r], stroke);
+
+    let steps = 14;
+    let arc: Vec<Pos2> = (0..=steps)
+        .map(|i| {
+            let a = (i as f32 / steps as f32) * std::f32::consts::PI;
+            Pos2::new(c.x + a.cos() * r, c.y + 1.0 + a.sin() * r)
+        })
+        .collect();
+    painter.add(egui::Shape::line(arc, stroke));
+
+    // Pole tips
+    painter.line_segment([Pos2::new(p_left.x - 1.2, p_left.y), Pos2::new(p_left.x + 1.2, p_left.y)], Stroke::new(2.2_f32, color));
+    painter.line_segment([Pos2::new(p_right.x - 1.2, p_right.y), Pos2::new(p_right.x + 1.2, p_right.y)], Stroke::new(2.2_f32, color));
+}
+
+/// Clean subtle 'X' close icon.
+pub fn paint_close(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let s = (rect.width().min(rect.height()) * 0.28).max(3.5_f32);
+    let stroke = Stroke::new(1.4_f32, color);
+    painter.line_segment([c + egui::vec2(-s, -s), c + egui::vec2(s, s)], stroke);
+    painter.line_segment([c + egui::vec2(s, -s), c + egui::vec2(-s, s)], stroke);
+}
+
+/// Wastebasket / trash can icon with lid and ribs.
+pub fn paint_trash(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.3_f32, color);
+    // Lid horizontal line
+    painter.line_segment([c + egui::vec2(-5.5, -4.5), c + egui::vec2(5.5, -4.5)], stroke);
+    // Handle on lid
+    painter.line_segment([c + egui::vec2(-2.0, -6.0), c + egui::vec2(2.0, -6.0)], stroke);
+    // Can body
+    let body = [
+        c + egui::vec2(-4.2, -3.5),
+        c + egui::vec2(-3.4, 5.5),
+        c + egui::vec2(3.4, 5.5),
+        c + egui::vec2(4.2, -3.5),
+    ];
+    painter.add(egui::Shape::closed_line(body.to_vec(), stroke));
+    // Vertical ribs inside can
+    painter.line_segment([c + egui::vec2(-1.4, -2.0), c + egui::vec2(-1.1, 3.8)], stroke);
+    painter.line_segment([c + egui::vec2(1.4, -2.0), c + egui::vec2(1.1, 3.8)], stroke);
+}
+
+/// Status indicator dot.
+pub fn paint_status_dot(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let r = (rect.width().min(rect.height()) * 0.25).clamp(2.5_f32, 4.0_f32);
+    painter.circle_filled(c, r, color);
+}
+
+/// Circular checkmark badge.
+pub fn paint_circle_check(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let r = (rect.width().min(rect.height()) * 0.42).max(4.5_f32);
+    let stroke = Stroke::new(1.3_f32, color);
+    painter.circle_stroke(c, r, stroke);
+    // checkmark
+    let p1 = c + egui::vec2(-r * 0.45, 0.0);
+    let p2 = c + egui::vec2(-r * 0.08, r * 0.38);
+    let p3 = c + egui::vec2(r * 0.45, -r * 0.35);
+    painter.add(egui::Shape::line(vec![p1, p2, p3], stroke));
+}
+
+/// Warning triangle badge.
+pub fn paint_warning(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.3_f32, color);
+    let top = c + egui::vec2(0.0, -5.5);
+    let bl = c + egui::vec2(-5.5, 4.5);
+    let br = c + egui::vec2(5.5, 4.5);
+    painter.add(egui::Shape::closed_line(vec![top, br, bl], stroke));
+    painter.line_segment([c + egui::vec2(0.0, -2.2), c + egui::vec2(0.0, 1.2)], stroke);
+    painter.circle_filled(c + egui::vec2(0.0, 2.9), 0.9_f32, color);
+}
+
+/// Document / file icon with folded corner.
+pub fn paint_file(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.3_f32, color);
+    let w = 9.0_f32;
+    let h = 12.0_f32;
+    let r = Rect::from_center_size(c, egui::vec2(w, h));
+    let fold = 3.2_f32;
+    let pts = vec![
+        r.left_top(),
+        Pos2::new(r.right() - fold, r.top()),
+        Pos2::new(r.right(), r.top() + fold),
+        r.right_bottom(),
+        r.left_bottom(),
+    ];
+    painter.add(egui::Shape::closed_line(pts, stroke));
+    painter.line_segment([Pos2::new(r.right() - fold, r.top()), Pos2::new(r.right() - fold, r.top() + fold)], stroke);
+    painter.line_segment([Pos2::new(r.right() - fold, r.top() + fold), Pos2::new(r.right(), r.top() + fold)], stroke);
+}
+
+
+
